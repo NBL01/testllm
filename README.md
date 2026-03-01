@@ -1,6 +1,6 @@
 # llm-reliability-analytics
 
-Minimal demo backend for evaluating LLM reliability over batches of test cases.
+Backend for evaluating LLM reliability over batches of test cases.
 
 ## Stack
 
@@ -31,7 +31,7 @@ llm-reliability-analytics/
   pytest.ini
 ```
 
-## Architecture (5-7 min defense)
+## Architecture
 
 One clear pipeline:
 

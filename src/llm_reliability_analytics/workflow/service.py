@@ -175,7 +175,8 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
         result.actual_answer_normalized = normalize_answer(result.actual_answer)
         result.error_taxonomy = _taxonomy_from_error_type(result.error_type)
 
-        oracle_type = oracle_mapping.get(test_case.oracle_type.value, "exact_match")
+        # Keep legacy aliases, but preserve direct oracle types (regex_match, json_schema, etc.).
+        oracle_type = oracle_mapping.get(test_case.oracle_type.value, test_case.oracle_type.value)
         metadata = dict(test_case.metadata)
 
         if oracle_type == "semantic_similarity":
