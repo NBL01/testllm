@@ -37,9 +37,17 @@ One clear pipeline:
 
 1. **Ingestion**: load and validate test cases (`JSONL`/`CSV`) with Pydantic.
 2. **Runner**: send prompts to a mock LLM and measure latency.
-3. **Oracles**: score correctness using pluggable oracle types.
+3. **Oracles**: score correctness using pluggable oracle types and normalized answers.
 4. **Storage**: persist runs and results in DuckDB.
 5. **Analytics**: compute reliability metrics and return a report.
+
+Domain enhancements for iterative experiments:
+
+- `dataset_version` on test cases and runs
+- repeated-run tracking (`run_group_id`, `repetition_index`)
+- normalized expected/actual answers in `test_results`
+- error taxonomy (`runtime`, `oracle`, `timeout`, etc.)
+- category-level and run-level report objects
 
 Main orchestration is in:
 
@@ -85,7 +93,7 @@ curl -X POST http://127.0.0.1:8000/load-test-cases \
 ```bash
 curl -X POST http://127.0.0.1:8000/run-batch \
   -H "Content-Type: application/json" \
-  -d '{"input_path":"sample_test_cases.jsonl","mode":"deterministic","seed":42,"limit":10,"run_name":"demo-run","model_name":"mock-llm"}'
+  -d '{"input_path":"sample_test_cases.jsonl","dataset_version":"v1","run_group_id":"baseline","mode":"deterministic","seed":42,"limit":10,"run_name":"demo-run","model_name":"mock-llm"}'
 ```
 
 ```bash
@@ -130,6 +138,28 @@ Options:
 - `--run-name`: logical run label
 - `--model-name`: model label
 - `--output`: write full results to a JSON file
+
+## Dataset Generator (300-case E2E benchmark)
+
+Generate a structured dataset with balanced categories and save as JSONL + Parquet:
+
+```bash
+PYTHONPATH=src python -m llm_reliability_analytics.cli.generate_dataset \
+  --total-cases 300 \
+  --dataset-version v2.0-demo \
+  --jsonl-path data/raw/llm_eval_dataset_v2_300.jsonl \
+  --parquet-path data/raw/llm_eval_dataset_v2_300.parquet
+```
+
+Categories:
+
+- `factual_qa`
+- `classification`
+- `information_extraction`
+- `numeric_reasoning`
+- `format_constrained_json`
+- `instruction_following`
+- `consistency_check`
 
 ## Notes
 

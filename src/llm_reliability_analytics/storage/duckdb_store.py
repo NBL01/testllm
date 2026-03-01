@@ -13,18 +13,28 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from llm_reliability_analytics.models.domain import RunStatus, TestCase, TestResult, TestRun
+from llm_reliability_analytics.models.domain import (
+    ErrorTaxonomy,
+    RunStatus,
+    TestCase,
+    TestResult,
+    TestRun,
+)
 from llm_reliability_analytics.storage.db import get_connection, initialize_schema
 
 
 class RunAggregatedSummary(BaseModel):
     run_id: str
+    dataset_version: str = "v1"
+    run_group_id: str = ""
+    repetition_index: int = Field(default=1, ge=1)
     total_test_cases: int = Field(ge=0)
     passed: int = Field(ge=0)
     failed: int = Field(ge=0)
     accuracy: float = Field(ge=0.0, le=1.0)
     average_latency_ms: float = Field(ge=0.0)
     error_distribution: dict[str, int] = Field(default_factory=dict)
+    error_taxonomy_distribution: dict[str, int] = Field(default_factory=dict)
 
 
 def initialize_storage_schema() -> None:
@@ -44,6 +54,7 @@ def upsert_test_cases(test_cases: list[TestCase]) -> int:
     rows = [
         (
             test_case.id,
+            test_case.dataset_version,
             test_case.category,
             test_case.difficulty.value,
             test_case.prompt,
@@ -57,6 +68,7 @@ def upsert_test_cases(test_cases: list[TestCase]) -> int:
         """
         INSERT INTO test_cases (
             test_case_id,
+            dataset_version,
             category,
             difficulty,
             prompt,
@@ -64,7 +76,7 @@ def upsert_test_cases(test_cases: list[TestCase]) -> int:
             oracle_type,
             metadata
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
         """,
         rows,
     )
@@ -79,14 +91,22 @@ insert_test_cases = upsert_test_cases
 def create_test_run(
     name: str,
     model_name: str,
+    dataset_version: str = "v1",
+    run_group_id: str | None = None,
+    repetition_index: int | None = None,
     metadata: dict[str, Any] | None = None,
     run_id: str | None = None,
 ) -> TestRun:
     initialize_schema()
+    normalized_group_id = run_group_id or f"{name}:{model_name}:{dataset_version}"
+    resolved_repetition_index = repetition_index or _next_repetition_index(normalized_group_id)
     run = TestRun(
         id=run_id or str(uuid4()),
         name=name,
         model_name=model_name,
+        dataset_version=dataset_version,
+        run_group_id=normalized_group_id,
+        repetition_index=resolved_repetition_index,
         status=RunStatus.RUNNING,
         started_at=datetime.now(timezone.utc),
         finished_at=None,
@@ -100,17 +120,23 @@ def create_test_run(
             id,
             name,
             model_name,
+            dataset_version,
+            run_group_id,
+            repetition_index,
             status,
             started_at,
             finished_at,
             metadata
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         [
             run.id,
             run.name,
             run.model_name,
+            run.dataset_version,
+            run.run_group_id,
+            run.repetition_index,
             run.status.value,
             run.started_at,
             run.finished_at,
@@ -136,12 +162,17 @@ def insert_batch_results(results: list[TestResult]) -> int:
         (
             result.run_id,
             result.test_case_id,
+            result.attempt_index,
+            result.dataset_version,
             result.category,
             result.actual_answer,
+            result.expected_answer_normalized,
+            result.actual_answer_normalized,
             result.is_correct,
             result.score,
             result.latency_ms,
             result.error_type,
+            result.error_taxonomy.value,
         )
         for result in results
     ]
@@ -150,14 +181,19 @@ def insert_batch_results(results: list[TestResult]) -> int:
         INSERT INTO test_results (
             run_id,
             test_case_id,
+            attempt_index,
+            dataset_version,
             category,
             actual_answer,
+            expected_answer_normalized,
+            actual_answer_normalized,
             is_correct,
             score,
             latency_ms,
-            error_type
+            error_type,
+            error_taxonomy
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         rows,
     )
@@ -188,16 +224,21 @@ def fetch_aggregated_summaries(run_id: str | None = None) -> list[RunAggregatedS
     summary_rows = conn.execute(
         f"""
         SELECT
-            run_id,
+            r.run_id,
+            tr.dataset_version,
+            tr.run_group_id,
+            tr.repetition_index,
             COUNT(*) AS total_test_cases,
-            SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) AS passed,
-            SUM(CASE WHEN is_correct THEN 0 ELSE 1 END) AS failed,
-            AVG(CASE WHEN is_correct THEN 1.0 ELSE 0.0 END) AS accuracy,
-            AVG(latency_ms) AS average_latency_ms
-        FROM test_results
+            SUM(CASE WHEN r.is_correct THEN 1 ELSE 0 END) AS passed,
+            SUM(CASE WHEN r.is_correct THEN 0 ELSE 1 END) AS failed,
+            AVG(CASE WHEN r.is_correct THEN 1.0 ELSE 0.0 END) AS accuracy,
+            AVG(r.latency_ms) AS average_latency_ms
+        FROM test_results r
+        JOIN test_runs tr
+            ON tr.id = r.run_id
         {where_clause}
-        GROUP BY run_id
-        ORDER BY run_id;
+        GROUP BY r.run_id, tr.dataset_version, tr.run_group_id, tr.repetition_index
+        ORDER BY r.run_id;
         """,
         filters,
     ).fetchall()
@@ -217,16 +258,33 @@ def fetch_aggregated_summaries(run_id: str | None = None) -> list[RunAggregatedS
             [current_run_id],
         ).fetchall()
         error_distribution = {error_type: count for error_type, count in error_rows}
+        taxonomy_rows = conn.execute(
+            """
+            SELECT error_taxonomy, COUNT(*) AS error_count
+            FROM test_results
+            WHERE run_id = ?
+              AND error_taxonomy IS NOT NULL
+              AND error_taxonomy <> ?
+            GROUP BY error_taxonomy
+            ORDER BY error_taxonomy;
+            """,
+            [current_run_id, ErrorTaxonomy.NONE.value],
+        ).fetchall()
+        error_taxonomy_distribution = {error_type: count for error_type, count in taxonomy_rows}
 
         summaries.append(
             RunAggregatedSummary(
                 run_id=current_run_id,
-                total_test_cases=int(row[1]),
-                passed=int(row[2]),
-                failed=int(row[3]),
-                accuracy=float(row[4]) if row[4] is not None else 0.0,
-                average_latency_ms=float(row[5]) if row[5] is not None else 0.0,
+                dataset_version=row[1],
+                run_group_id=row[2],
+                repetition_index=int(row[3]),
+                total_test_cases=int(row[4]),
+                passed=int(row[5]),
+                failed=int(row[6]),
+                accuracy=float(row[7]) if row[7] is not None else 0.0,
+                average_latency_ms=float(row[8]) if row[8] is not None else 0.0,
                 error_distribution=error_distribution,
+                error_taxonomy_distribution=error_taxonomy_distribution,
             )
         )
 
@@ -240,17 +298,25 @@ def fetch_results_for_run(run_id: str) -> list[TestResult]:
     rows = conn.execute(
         """
         SELECT
-            run_id,
-            test_case_id,
-            category,
-            actual_answer,
-            is_correct,
-            score,
-            latency_ms,
-            error_type
-        FROM test_results
-        WHERE run_id = ?
-        ORDER BY test_case_id;
+            r.run_id,
+            r.test_case_id,
+            r.attempt_index,
+            r.dataset_version,
+            r.category,
+            tc.oracle_type,
+            r.actual_answer,
+            r.expected_answer_normalized,
+            r.actual_answer_normalized,
+            r.is_correct,
+            r.score,
+            r.latency_ms,
+            r.error_type,
+            r.error_taxonomy
+        FROM test_results r
+        LEFT JOIN test_cases tc
+            ON tc.test_case_id = r.test_case_id
+        WHERE r.run_id = ?
+        ORDER BY r.test_case_id, r.attempt_index;
         """,
         [run_id],
     ).fetchall()
@@ -260,12 +326,32 @@ def fetch_results_for_run(run_id: str) -> list[TestResult]:
         TestResult(
             run_id=row[0],
             test_case_id=row[1],
-            category=row[2],
-            actual_answer=row[3],
-            is_correct=bool(row[4]),
-            score=float(row[5]),
-            latency_ms=float(row[6]),
-            error_type=row[7],
+            attempt_index=int(row[2]),
+            dataset_version=row[3],
+            category=row[4],
+            oracle_type=row[5],
+            actual_answer=row[6],
+            expected_answer_normalized=row[7],
+            actual_answer_normalized=row[8],
+            is_correct=bool(row[9]),
+            score=float(row[10]),
+            latency_ms=float(row[11]),
+            error_type=row[12],
+            error_taxonomy=ErrorTaxonomy(row[13]) if row[13] else ErrorTaxonomy.NONE,
         )
         for row in rows
     ]
+
+
+def _next_repetition_index(run_group_id: str) -> int:
+    conn = get_connection()
+    row = conn.execute(
+        """
+        SELECT COALESCE(MAX(repetition_index), 0)
+        FROM test_runs
+        WHERE run_group_id = ?;
+        """,
+        [run_group_id],
+    ).fetchone()
+    conn.close()
+    return int(row[0]) + 1

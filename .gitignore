@@ -4,4 +4,6 @@ __pycache__/
 data/*
 !data/raw/
 !data/raw/sample_test_cases.jsonl
+!data/raw/llm_eval_dataset_v2_300.jsonl
+!data/raw/llm_eval_dataset_v2_300.parquet
 data/*.duckdb

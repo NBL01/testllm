@@ -41,6 +41,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Model label stored with the run.",
     )
     parser.add_argument(
+        "--dataset-version",
+        default=None,
+        help="Optional dataset version tag for this run.",
+    )
+    parser.add_argument(
+        "--run-group-id",
+        default=None,
+        help="Optional run group id for repeated experiments.",
+    )
+    parser.add_argument(
+        "--repeats-per-case",
+        type=int,
+        default=1,
+        help="How many times to execute each test case in the run.",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -55,9 +71,12 @@ def main() -> None:
         input_path=args.input,
         run_name=args.run_name,
         model_name=args.model_name,
+        dataset_version=args.dataset_version,
+        run_group_id=args.run_group_id,
         mode=args.mode,
         seed=args.seed,
         limit=args.limit,
+        repeats_per_case=args.repeats_per_case,
     )
 
     print("Run summary")

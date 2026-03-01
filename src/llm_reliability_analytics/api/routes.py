@@ -26,6 +26,9 @@ class LoadTestCasesResponse(BaseModel):
     total_rows: int
     valid_rows: int
     invalid_rows: int
+    dataset_versions: list[str]
+    category_distribution: dict[str, int]
+    oracle_type_distribution: dict[str, int]
     stored_test_cases: int
 
 
@@ -33,9 +36,12 @@ class RunBatchRequest(BaseModel):
     input_path: str = "sample_test_cases.jsonl"
     run_name: str = "demo-run"
     model_name: str = "mock-llm"
+    dataset_version: str | None = None
+    run_group_id: str | None = None
     mode: Literal["deterministic", "semi_random"] = "deterministic"
     seed: int = 42
     limit: int | None = Field(default=None, ge=1)
+    repeats_per_case: int = Field(default=1, ge=1)
 
 
 class RunBatchResponse(BaseModel):
@@ -69,9 +75,12 @@ def run_batch_endpoint(request: RunBatchRequest) -> RunBatchResponse:
             input_path=request.input_path,
             run_name=request.run_name,
             model_name=request.model_name,
+            dataset_version=request.dataset_version,
+            run_group_id=request.run_group_id,
             mode=request.mode,
             seed=request.seed,
             limit=request.limit,
+            repeats_per_case=request.repeats_per_case,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

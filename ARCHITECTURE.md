@@ -9,6 +9,7 @@ Provide a small, explainable backend that demonstrates reliability evaluation of
 - `ingestion/loader.py`
   - Loads `JSONL` or `CSV`
   - Validates each row with Pydantic `TestCase`
+  - Tracks dataset quality summary (categories, oracle mix, dataset versions)
   - Skips invalid rows and reports summary
 
 - `runner/mock_client.py` + `runner/test_runner.py`
@@ -19,7 +20,7 @@ Provide a small, explainable backend that demonstrates reliability evaluation of
   - Scores answers (`exact_match`, `regex_match`, `keyword_match`, `numeric_tolerance`, `json_schema`)
 
 - `storage/duckdb_store.py`
-  - Persists test cases, runs, and results in DuckDB
+  - Persists versioned test cases, repeated runs, and normalized results in DuckDB
   - Provides SQL summaries for run-level metrics
 
 - `analytics/reliability.py`
@@ -48,5 +49,6 @@ Provide a small, explainable backend that demonstrates reliability evaluation of
    - accuracy
    - latency
    - category-wise performance
-   - error distribution
+   - error distribution + taxonomy
+   - repeated-run metadata (`dataset_version`, `repetition_index`)
 5. Mention that each module can be replaced later by real LLM clients and richer oracles.

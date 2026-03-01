@@ -2,6 +2,7 @@
 
 from llm_reliability_analytics.oracles.engine import (
     BaseOracle,
+    CompositeRuleOracle,
     ExactMatchOracle,
     JsonSchemaOracle,
     KeywordMatchOracle,
@@ -9,8 +10,10 @@ from llm_reliability_analytics.oracles.engine import (
     OracleEvaluation,
     OracleFactory,
     RegexMatchOracle,
+    SemanticSimilarityOracle,
     evaluate_with_oracle,
 )
+from llm_reliability_analytics.oracles.normalization import normalize_answer
 
 __all__ = [
     "BaseOracle",
@@ -20,6 +23,9 @@ __all__ = [
     "KeywordMatchOracle",
     "NumericToleranceOracle",
     "JsonSchemaOracle",
+    "SemanticSimilarityOracle",
+    "CompositeRuleOracle",
     "OracleFactory",
     "evaluate_with_oracle",
+    "normalize_answer",
 ]

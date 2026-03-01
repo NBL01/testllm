@@ -1,10 +1,11 @@
 import csv
 import json
 import logging
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from llm_reliability_analytics.models.domain import TestCase
 
@@ -18,6 +19,9 @@ class IngestionSummary(BaseModel):
     total_rows: int
     valid_rows: int
     invalid_rows: int
+    dataset_versions: list[str] = Field(default_factory=list)
+    category_distribution: dict[str, int] = Field(default_factory=dict)
+    oracle_type_distribution: dict[str, int] = Field(default_factory=dict)
 
 
 def load_test_cases(file_path: str | Path) -> tuple[list[TestCase], IngestionSummary]:
@@ -69,7 +73,8 @@ def _load_from_jsonl(path: Path) -> tuple[list[TestCase], IngestionSummary]:
             test_cases.append(test_case)
             valid_rows += 1
 
-    summary = IngestionSummary(
+    summary = _build_ingestion_summary(
+        test_cases=test_cases,
         total_rows=total_rows,
         valid_rows=valid_rows,
         invalid_rows=invalid_rows,
@@ -102,7 +107,8 @@ def _load_from_csv(path: Path) -> tuple[list[TestCase], IngestionSummary]:
             test_cases.append(test_case)
             valid_rows += 1
 
-    summary = IngestionSummary(
+    summary = _build_ingestion_summary(
+        test_cases=test_cases,
         total_rows=total_rows,
         valid_rows=valid_rows,
         invalid_rows=invalid_rows,
@@ -150,3 +156,23 @@ def _resolve_input_path(file_path: str | Path) -> Path:
         return raw_path
 
     raise FileNotFoundError(f"Input file not found: {file_path}")
+
+
+def _build_ingestion_summary(
+    test_cases: list[TestCase],
+    total_rows: int,
+    valid_rows: int,
+    invalid_rows: int,
+) -> IngestionSummary:
+    category_distribution = Counter(test_case.category for test_case in test_cases)
+    oracle_type_distribution = Counter(test_case.oracle_type.value for test_case in test_cases)
+    dataset_versions = sorted({test_case.dataset_version for test_case in test_cases})
+
+    return IngestionSummary(
+        total_rows=total_rows,
+        valid_rows=valid_rows,
+        invalid_rows=invalid_rows,
+        dataset_versions=dataset_versions,
+        category_distribution=dict(category_distribution),
+        oracle_type_distribution=dict(oracle_type_distribution),
+    )

@@ -41,3 +41,25 @@ def test_test_runner_returns_result_per_case_with_latency() -> None:
     assert [result.test_case_id for result in results] == ["tc-001", "tc-002"]
     assert all(result.latency_ms >= 0 for result in results)
     assert all(result.error_type is None for result in results)
+
+
+def test_test_runner_supports_repeated_attempts() -> None:
+    test_cases = [
+        DomainTestCase(
+            id="tc-repeat-1",
+            category="math",
+            difficulty="easy",
+            prompt="What is 2 + 2?",
+            expected_answer="4",
+            oracle_type="exact_match",
+            metadata={},
+        )
+    ]
+
+    runner = BatchRunner(llm_client=MockLLMClient(mode="semi_random", seed=7))
+    results = runner.run(test_cases, run_id="run-repeat-001", repeats_per_case=3)
+
+    assert len(results) == 3
+    assert all(result.run_id == "run-repeat-001" for result in results)
+    assert [result.test_case_id for result in results] == ["tc-repeat-1", "tc-repeat-1", "tc-repeat-1"]
+    assert [result.attempt_index for result in results] == [1, 2, 3]

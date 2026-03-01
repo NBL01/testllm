@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 EXPECTED_TABLE_COLUMNS: dict[str, list[str]] = {
     "test_cases": [
         "test_case_id",
+        "dataset_version",
         "category",
         "difficulty",
         "prompt",
@@ -34,6 +35,9 @@ EXPECTED_TABLE_COLUMNS: dict[str, list[str]] = {
         "id",
         "name",
         "model_name",
+        "dataset_version",
+        "run_group_id",
+        "repetition_index",
         "status",
         "started_at",
         "finished_at",
@@ -42,12 +46,17 @@ EXPECTED_TABLE_COLUMNS: dict[str, list[str]] = {
     "test_results": [
         "run_id",
         "test_case_id",
+        "attempt_index",
+        "dataset_version",
         "category",
         "actual_answer",
+        "expected_answer_normalized",
+        "actual_answer_normalized",
         "is_correct",
         "score",
         "latency_ms",
         "error_type",
+        "error_taxonomy",
     ],
 }
 
@@ -55,6 +64,7 @@ CREATE_TABLE_SQL: dict[str, str] = {
     "test_cases": """
         CREATE TABLE IF NOT EXISTS test_cases (
             test_case_id TEXT PRIMARY KEY,
+            dataset_version TEXT NOT NULL,
             category TEXT NOT NULL,
             difficulty TEXT NOT NULL,
             prompt TEXT NOT NULL,
@@ -68,6 +78,9 @@ CREATE_TABLE_SQL: dict[str, str] = {
             id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             model_name TEXT NOT NULL,
+            dataset_version TEXT NOT NULL,
+            run_group_id TEXT NOT NULL,
+            repetition_index INTEGER NOT NULL,
             status TEXT NOT NULL,
             started_at TIMESTAMP,
             finished_at TIMESTAMP,
@@ -78,13 +91,18 @@ CREATE_TABLE_SQL: dict[str, str] = {
         CREATE TABLE IF NOT EXISTS test_results (
             run_id TEXT NOT NULL,
             test_case_id TEXT NOT NULL,
+            attempt_index INTEGER NOT NULL,
+            dataset_version TEXT,
             category TEXT,
             actual_answer TEXT,
+            expected_answer_normalized TEXT,
+            actual_answer_normalized TEXT,
             is_correct BOOLEAN NOT NULL,
             score DOUBLE NOT NULL,
             latency_ms DOUBLE NOT NULL,
             error_type TEXT,
-            PRIMARY KEY (run_id, test_case_id)
+            error_taxonomy TEXT,
+            PRIMARY KEY (run_id, test_case_id, attempt_index)
         );
     """,
 }
