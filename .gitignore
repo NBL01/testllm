@@ -1,0 +1,7 @@
+__pycache__/
+.pytest_cache/
+.venv/
+data/*
+!data/raw/
+!data/raw/sample_test_cases.jsonl
+data/*.duckdb
