@@ -80,7 +80,13 @@ def run_batch_workflow(
     input_path: str,
     run_name: str,
     model_name: str,
+    run_label: str | None = None,
+    provider: str = "local",
+    model_version: str = "n/a",
     dataset_version: str | None = None,
+    temperature: float = 0.0,
+    run_mode: Literal["mock", "real", "offline_replay"] = "mock",
+    notes: str = "",
     run_group_id: str | None = None,
     mode: Literal["deterministic", "semi_random"] = "deterministic",
     seed: int = 42,
@@ -105,12 +111,22 @@ def run_batch_workflow(
     run = create_test_run(
         name=run_name,
         model_name=model_name,
+        run_label=run_label,
+        provider=provider,
+        model_version=model_version,
         dataset_version=resolved_dataset_version,
+        temperature=temperature,
+        repeat_count=repeats_per_case,
+        mode=run_mode,
+        notes=notes,
         run_group_id=run_group_id,
     )
 
     runner = TestRunner(llm_client=MockLLMClient(mode=mode, seed=seed))
     results = runner.run(test_cases, run_id=run.id, repeats_per_case=repeats_per_case)
+    latency_source = "mock_simulated" if run_mode == "mock" else "observed"
+    for result in results:
+        result.latency_source = latency_source
     score_results_with_oracles(test_cases=test_cases, results=results)
     insert_batch_results(results)
 
@@ -173,7 +189,14 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
         result.oracle_type = test_case.oracle_type.value
         result.expected_answer_normalized = normalize_answer(test_case.expected_answer)
         result.actual_answer_normalized = normalize_answer(result.actual_answer)
+        result.normalized_answer = result.actual_answer_normalized
         result.error_taxonomy = _taxonomy_from_error_type(result.error_type)
+        result.critical_error_flag = result.error_taxonomy in {
+            ErrorTaxonomy.RUNTIME,
+            ErrorTaxonomy.ORACLE,
+            ErrorTaxonomy.TIMEOUT,
+            ErrorTaxonomy.UNKNOWN,
+        }
 
         # Keep legacy aliases, but preserve direct oracle types (regex_match, json_schema, etc.).
         oracle_type = oracle_mapping.get(test_case.oracle_type.value, test_case.oracle_type.value)
@@ -200,11 +223,13 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
             result.score = evaluation.score
             if result.error_type is None:
                 result.error_taxonomy = ErrorTaxonomy.NONE
+                result.critical_error_flag = False
         except Exception as exc:  # noqa: BLE001 - batch should continue on single-case failures
             result.is_correct = False
             result.score = 0.0
             result.error_type = result.error_type or f"oracle_{type(exc).__name__}"
             result.error_taxonomy = ErrorTaxonomy.ORACLE
+            result.critical_error_flag = True
 
 
 def _taxonomy_from_error_type(error_type: str | None) -> ErrorTaxonomy:

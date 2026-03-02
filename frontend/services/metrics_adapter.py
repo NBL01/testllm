@@ -24,12 +24,32 @@ class RunComparisonBundle:
     category_delta: pd.DataFrame
 
 
+@dataclass
+class RunInsights:
+    weakest_category: str
+    strongest_category: str
+    most_frequent_error_type: str
+    improvement_status: str
+
+
 class MetricsAdapter:
-    def available_run_ids(self, results_df: pd.DataFrame) -> list[str]:
-        if results_df.empty or "run_id" not in results_df.columns:
-            return []
-        run_ids = sorted(results_df["run_id"].dropna().astype(str).unique().tolist())
-        return run_ids
+    def run_selector_options(self, runs_df: pd.DataFrame, results_df: pd.DataFrame) -> pd.DataFrame:
+        if runs_df.empty:
+            run_ids = sorted(results_df["run_id"].dropna().astype(str).unique().tolist()) if not results_df.empty else []
+            if not run_ids:
+                return pd.DataFrame(columns=["run_id", "run_label", "created_at"])
+            return pd.DataFrame(
+                {
+                    "run_id": run_ids,
+                    "run_label": run_ids,
+                    "created_at": pd.NaT,
+                }
+            )
+
+        options = runs_df[["run_id", "run_label", "created_at"]].drop_duplicates("run_id").copy()
+        options["created_at"] = pd.to_datetime(options["created_at"], errors="coerce")
+        options = options.sort_values(["created_at", "run_id"], ascending=[False, False])
+        return options
 
     def build_report_for_run(
         self,
@@ -184,6 +204,58 @@ class MetricsAdapter:
             category_delta=category_delta,
         )
 
+    def latest_previous_run_id(self, runs_df: pd.DataFrame, run_id: str) -> str | None:
+        if runs_df.empty or "run_id" not in runs_df.columns:
+            return None
+
+        ordered = runs_df.copy()
+        ordered["created_at"] = pd.to_datetime(ordered["created_at"], errors="coerce")
+        ordered = ordered.sort_values(["created_at", "run_id"], ascending=[False, False])
+
+        run_ids = ordered["run_id"].astype(str).tolist()
+        try:
+            idx = run_ids.index(str(run_id))
+        except ValueError:
+            return run_ids[0] if run_ids else None
+
+        if idx + 1 < len(run_ids):
+            return run_ids[idx + 1]
+        return None
+
+    def build_insights(
+        self,
+        report: ReliabilityReport,
+        improvement_status: str,
+    ) -> RunInsights:
+        weakest = report.weakest_categories[0].category if report.weakest_categories else "n/a"
+
+        strongest = "n/a"
+        if report.category_reports:
+            strongest_item = max(report.category_reports, key=lambda item: (item.accuracy, item.total_test_cases))
+            strongest = strongest_item.category
+
+        top_error = report.most_frequent_error_types[0].error_type if report.most_frequent_error_types else "none"
+
+        return RunInsights(
+            weakest_category=weakest,
+            strongest_category=strongest,
+            most_frequent_error_type=top_error,
+            improvement_status=improvement_status,
+        )
+
+    def improvement_status_vs_previous(
+        self,
+        current_report: ReliabilityReport,
+        previous_report: ReliabilityReport | None,
+    ) -> str:
+        if previous_report is None:
+            return "no_previous_run"
+
+        delta = current_report.overall_reliability_score - previous_report.overall_reliability_score
+        if abs(delta) < 1e-9:
+            return "unchanged"
+        return "improved" if delta > 0 else "worsened"
+
     def _category_delta_table(
         self,
         baseline: ReliabilityReport,
@@ -216,17 +288,20 @@ class MetricsAdapter:
         return TestResult(
             run_id=str(row.get("run_id")),
             test_case_id=str(row.get("test_case_id")),
-            attempt_index=1,
+            attempt_index=int(row.get("attempt_index", 1) or 1),
             category=self._as_optional_str(row.get("category")),
             oracle_type=self._as_optional_str(row.get("oracle_type")),
             actual_answer=self._as_optional_str(row.get("actual_answer")),
             expected_answer_normalized=self._as_optional_str(row.get("expected_answer")),
-            actual_answer_normalized=self._as_optional_str(row.get("actual_answer")),
+            actual_answer_normalized=self._as_optional_str(row.get("normalized_answer")),
+            normalized_answer=self._as_optional_str(row.get("normalized_answer")),
             is_correct=bool(row.get("is_correct", False)),
             score=float(row.get("score", 0.0) or 0.0),
             latency_ms=float(row.get("latency_ms", 0.0) or 0.0),
+            latency_source=self._as_optional_str(row.get("latency_source")) or "measured",
             error_type=self._as_optional_str(row.get("error_type")),
             error_taxonomy=taxonomy,
+            critical_error_flag=bool(row.get("critical_error_flag", False)),
         )
 
     def _parse_taxonomy(self, raw_value: Any) -> ErrorTaxonomy:

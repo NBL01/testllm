@@ -9,10 +9,14 @@ from llm_reliability_analytics.analytics.reliability import ReliabilityReport
 
 
 def render_kpi_cards(report: ReliabilityReport) -> None:
-    cols = st.columns(6)
-    cols[0].metric("Total Cases", as_int(report.total_test_cases))
-    cols[1].metric("Passed", as_int(report.passed))
-    cols[2].metric("Failed", as_int(report.failed))
-    cols[3].metric("Accuracy", pct(report.accuracy))
-    cols[4].metric("Avg Latency", ms(report.average_latency_ms))
-    cols[5].metric("Reliability", score(report.overall_reliability_score))
+    cols = st.columns(4)
+    cols[0].metric("Unique Test Cases", as_int(report.unique_test_cases))
+    cols[1].metric("Total Attempts", as_int(report.total_test_cases))
+    cols[2].metric("Passed Attempts", as_int(report.passed))
+    cols[3].metric("Failed Attempts", as_int(report.failed))
+
+    cols2 = st.columns(4)
+    cols2[0].metric("Accuracy", pct(report.accuracy))
+    cols2[1].metric("Avg Latency", ms(report.average_latency_ms))
+    cols2[2].metric("P95 Latency", ms(report.p95_latency_ms))
+    cols2[3].metric("Reliability Score", score(report.overall_reliability_score))

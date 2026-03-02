@@ -36,14 +36,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Logical name for the run.",
     )
     parser.add_argument(
+        "--run-label",
+        default=None,
+        help="Optional human-readable run label shown in dashboards.",
+    )
+    parser.add_argument(
         "--model-name",
         default="mock-llm",
         help="Model label stored with the run.",
     )
     parser.add_argument(
+        "--provider",
+        default="local",
+        help="Model provider label (e.g., openai, anthropic, local).",
+    )
+    parser.add_argument(
+        "--model-version",
+        default="n/a",
+        help="Model version label for traceability.",
+    )
+    parser.add_argument(
         "--dataset-version",
         default=None,
         help="Optional dataset version tag for this run.",
+    )
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=0.0,
+        help="Sampling temperature used in the run metadata.",
+    )
+    parser.add_argument(
+        "--run-mode",
+        choices=["mock", "real", "offline_replay"],
+        default="mock",
+        help="Execution mode metadata shown in reporting/UI.",
+    )
+    parser.add_argument(
+        "--notes",
+        default="",
+        help="Optional notes stored with the run.",
     )
     parser.add_argument(
         "--run-group-id",
@@ -70,8 +102,14 @@ def main() -> None:
     result = run_batch_workflow(
         input_path=args.input,
         run_name=args.run_name,
+        run_label=args.run_label,
         model_name=args.model_name,
+        provider=args.provider,
+        model_version=args.model_version,
         dataset_version=args.dataset_version,
+        temperature=args.temperature,
+        run_mode=args.run_mode,
+        notes=args.notes,
         run_group_id=args.run_group_id,
         mode=args.mode,
         seed=args.seed,

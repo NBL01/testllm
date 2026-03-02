@@ -55,8 +55,16 @@ class TestCase(BaseModel):
 class TestRun(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     name: str
+    run_label: str | None = None
     model_name: str
+    provider: str = "local"
+    model_version: str = "n/a"
     dataset_version: str = "v1"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    temperature: float = 0.0
+    repeat_count: int = Field(default=1, ge=1)
+    mode: str = "mock"
+    notes: str = ""
     run_group_id: str = ""
     repetition_index: int = Field(default=1, ge=1)
     status: RunStatus = RunStatus.PENDING
@@ -78,8 +86,11 @@ class TestResult(BaseModel):
     is_correct: bool
     score: float = Field(ge=0.0, le=1.0)
     latency_ms: float = Field(ge=0.0)
+    latency_source: str = "measured"
     error_type: str | None = None
     error_taxonomy: ErrorTaxonomy = ErrorTaxonomy.NONE
+    critical_error_flag: bool = False
+    normalized_answer: str | None = None
 
 
 class CategoryLevelReport(BaseModel):

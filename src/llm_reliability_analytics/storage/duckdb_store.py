@@ -25,7 +25,16 @@ from llm_reliability_analytics.storage.db import get_connection, initialize_sche
 
 class RunAggregatedSummary(BaseModel):
     run_id: str
+    run_label: str = ""
+    model_name: str = ""
+    provider: str = ""
+    model_version: str = ""
     dataset_version: str = "v1"
+    created_at: datetime | None = None
+    temperature: float = 0.0
+    repeat_count: int = Field(default=1, ge=1)
+    mode: str = "mock"
+    notes: str = ""
     run_group_id: str = ""
     repetition_index: int = Field(default=1, ge=1)
     total_test_cases: int = Field(ge=0)
@@ -91,7 +100,15 @@ insert_test_cases = upsert_test_cases
 def create_test_run(
     name: str,
     model_name: str,
+    run_label: str | None = None,
+    provider: str = "local",
+    model_version: str = "n/a",
     dataset_version: str = "v1",
+    created_at: datetime | None = None,
+    temperature: float = 0.0,
+    repeat_count: int = 1,
+    mode: str = "mock",
+    notes: str = "",
     run_group_id: str | None = None,
     repetition_index: int | None = None,
     metadata: dict[str, Any] | None = None,
@@ -100,15 +117,25 @@ def create_test_run(
     initialize_schema()
     normalized_group_id = run_group_id or f"{name}:{model_name}:{dataset_version}"
     resolved_repetition_index = repetition_index or _next_repetition_index(normalized_group_id)
+    resolved_created_at = created_at or datetime.now(timezone.utc)
+    resolved_run_label = run_label or f"{model_name} | {dataset_version} | {resolved_created_at:%Y-%m-%d %H:%M}"
     run = TestRun(
         id=run_id or str(uuid4()),
         name=name,
+        run_label=resolved_run_label,
         model_name=model_name,
+        provider=provider,
+        model_version=model_version,
         dataset_version=dataset_version,
+        created_at=resolved_created_at,
+        temperature=temperature,
+        repeat_count=max(1, int(repeat_count)),
+        mode=mode,
+        notes=notes,
         run_group_id=normalized_group_id,
         repetition_index=resolved_repetition_index,
         status=RunStatus.RUNNING,
-        started_at=datetime.now(timezone.utc),
+        started_at=resolved_created_at,
         finished_at=None,
         metadata=metadata or {},
     )
@@ -119,8 +146,16 @@ def create_test_run(
         INSERT INTO test_runs (
             id,
             name,
+            run_label,
             model_name,
+            provider,
+            model_version,
             dataset_version,
+            created_at,
+            temperature,
+            repeat_count,
+            mode,
+            notes,
             run_group_id,
             repetition_index,
             status,
@@ -128,13 +163,21 @@ def create_test_run(
             finished_at,
             metadata
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         [
             run.id,
             run.name,
+            run.run_label,
             run.model_name,
+            run.provider,
+            run.model_version,
             run.dataset_version,
+            run.created_at,
+            run.temperature,
+            run.repeat_count,
+            run.mode,
+            run.notes,
             run.run_group_id,
             run.repetition_index,
             run.status.value,
@@ -171,8 +214,11 @@ def insert_batch_results(results: list[TestResult]) -> int:
             result.is_correct,
             result.score,
             result.latency_ms,
+            result.latency_source,
             result.error_type,
             result.error_taxonomy.value,
+            result.critical_error_flag,
+            result.normalized_answer,
         )
         for result in results
     ]
@@ -190,10 +236,13 @@ def insert_batch_results(results: list[TestResult]) -> int:
             is_correct,
             score,
             latency_ms,
+            latency_source,
             error_type,
-            error_taxonomy
+            error_taxonomy,
+            critical_error_flag,
+            normalized_answer
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         rows,
     )
@@ -225,7 +274,16 @@ def fetch_aggregated_summaries(run_id: str | None = None) -> list[RunAggregatedS
         f"""
         SELECT
             r.run_id,
+            tr.run_label,
+            tr.model_name,
+            tr.provider,
+            tr.model_version,
             tr.dataset_version,
+            tr.created_at,
+            tr.temperature,
+            tr.repeat_count,
+            tr.mode,
+            tr.notes,
             tr.run_group_id,
             tr.repetition_index,
             COUNT(*) AS total_test_cases,
@@ -237,7 +295,20 @@ def fetch_aggregated_summaries(run_id: str | None = None) -> list[RunAggregatedS
         JOIN test_runs tr
             ON tr.id = r.run_id
         {where_clause}
-        GROUP BY r.run_id, tr.dataset_version, tr.run_group_id, tr.repetition_index
+        GROUP BY
+            r.run_id,
+            tr.run_label,
+            tr.model_name,
+            tr.provider,
+            tr.model_version,
+            tr.dataset_version,
+            tr.created_at,
+            tr.temperature,
+            tr.repeat_count,
+            tr.mode,
+            tr.notes,
+            tr.run_group_id,
+            tr.repetition_index
         ORDER BY r.run_id;
         """,
         filters,
@@ -275,14 +346,23 @@ def fetch_aggregated_summaries(run_id: str | None = None) -> list[RunAggregatedS
         summaries.append(
             RunAggregatedSummary(
                 run_id=current_run_id,
-                dataset_version=row[1],
-                run_group_id=row[2],
-                repetition_index=int(row[3]),
-                total_test_cases=int(row[4]),
-                passed=int(row[5]),
-                failed=int(row[6]),
-                accuracy=float(row[7]) if row[7] is not None else 0.0,
-                average_latency_ms=float(row[8]) if row[8] is not None else 0.0,
+                run_label=row[1] or "",
+                model_name=row[2] or "",
+                provider=row[3] or "",
+                model_version=row[4] or "",
+                dataset_version=row[5],
+                created_at=row[6],
+                temperature=float(row[7] or 0.0),
+                repeat_count=int(row[8] or 1),
+                mode=row[9] or "mock",
+                notes=row[10] or "",
+                run_group_id=row[11],
+                repetition_index=int(row[12]),
+                total_test_cases=int(row[13]),
+                passed=int(row[14]),
+                failed=int(row[15]),
+                accuracy=float(row[16]) if row[16] is not None else 0.0,
+                average_latency_ms=float(row[17]) if row[17] is not None else 0.0,
                 error_distribution=error_distribution,
                 error_taxonomy_distribution=error_taxonomy_distribution,
             )
@@ -310,8 +390,11 @@ def fetch_results_for_run(run_id: str) -> list[TestResult]:
             r.is_correct,
             r.score,
             r.latency_ms,
+            r.latency_source,
             r.error_type,
-            r.error_taxonomy
+            r.error_taxonomy,
+            r.critical_error_flag,
+            r.normalized_answer
         FROM test_results r
         LEFT JOIN test_cases tc
             ON tc.test_case_id = r.test_case_id
@@ -336,8 +419,11 @@ def fetch_results_for_run(run_id: str) -> list[TestResult]:
             is_correct=bool(row[9]),
             score=float(row[10]),
             latency_ms=float(row[11]),
-            error_type=row[12],
-            error_taxonomy=ErrorTaxonomy(row[13]) if row[13] else ErrorTaxonomy.NONE,
+            latency_source=row[12] or "measured",
+            error_type=row[13],
+            error_taxonomy=ErrorTaxonomy(row[14]) if row[14] else ErrorTaxonomy.NONE,
+            critical_error_flag=bool(row[15]),
+            normalized_answer=row[16],
         )
         for row in rows
     ]

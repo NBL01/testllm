@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from frontend.services.metrics_adapter import RunComparisonBundle
+from frontend.services.metrics_adapter import RunComparisonBundle, RunInsights
 from frontend.utils.formatters import delta_label, ms, pct, score
 from llm_reliability_analytics.analytics.reliability import ReliabilityReport
 
@@ -12,10 +12,10 @@ from llm_reliability_analytics.analytics.reliability import ReliabilityReport
 def render_overview_summary(report: ReliabilityReport) -> None:
     st.markdown(
         (
-            f"This run processed **{report.total_test_cases}** attempts, reached "
-            f"**{pct(report.accuracy)}** accuracy, and produced a reliability score of "
-            f"**{score(report.overall_reliability_score)}**. "
-            f"Average latency is **{ms(report.average_latency_ms)}**."
+            f"This run evaluated **{report.unique_test_cases}** unique test cases over "
+            f"**{report.total_test_cases}** processed attempts. "
+            f"Accuracy is **{pct(report.accuracy)}**, average latency is **{ms(report.average_latency_ms)}**, "
+            f"and reliability score is **{score(report.overall_reliability_score)}**."
         )
     )
 
@@ -42,6 +42,15 @@ def render_error_insight(report: ReliabilityReport) -> None:
         f"Most frequent error: **{top_error.error_type}** "
         f"(count={top_error.count}, rate={pct(top_error.rate)})."
     )
+
+
+def render_top_insights(insights: RunInsights) -> None:
+    st.subheader("Insights")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Weakest Category", insights.weakest_category)
+    c2.metric("Strongest Category", insights.strongest_category)
+    c3.metric("Top Error Type", insights.most_frequent_error_type)
+    c4.metric("Vs Previous Run", insights.improvement_status.replace("_", " ").title())
 
 
 def render_run_comparison_summary(bundle: RunComparisonBundle) -> None:

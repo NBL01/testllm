@@ -16,10 +16,29 @@ import duckdb
 import pandas as pd
 
 
+REQUIRED_RUN_COLUMNS = [
+    "run_id",
+    "name",
+    "run_label",
+    "model_name",
+    "provider",
+    "model_version",
+    "dataset_version",
+    "created_at",
+    "temperature",
+    "repeat_count",
+    "mode",
+    "notes",
+    "run_group_id",
+    "repetition_index",
+    "status",
+]
+
 REQUIRED_RESULT_COLUMNS = [
     "result_id",
     "run_id",
     "test_case_id",
+    "attempt_index",
     "category",
     "oracle_type",
     "actual_answer",
@@ -27,8 +46,11 @@ REQUIRED_RESULT_COLUMNS = [
     "is_correct",
     "score",
     "latency_ms",
+    "latency_source",
     "error_type",
     "error_taxonomy",
+    "critical_error_flag",
+    "normalized_answer",
     "timestamp",
 ]
 
@@ -89,15 +111,23 @@ class DataProvider:
                     SELECT
                         id AS run_id,
                         name,
+                        run_label,
                         model_name,
+                        provider,
+                        model_version,
                         dataset_version,
+                        created_at,
+                        temperature,
+                        repeat_count,
+                        mode,
+                        notes,
                         run_group_id,
                         repetition_index,
                         status,
                         started_at,
                         finished_at
                     FROM test_runs
-                    ORDER BY started_at DESC, run_id DESC;
+                    ORDER BY COALESCE(created_at, started_at, finished_at) DESC, run_id DESC;
                     """
                 ).fetchdf()
                 if "test_runs" in tables
@@ -128,6 +158,7 @@ class DataProvider:
                     CONCAT(r.run_id, ':', r.test_case_id, ':', r.attempt_index) AS result_id,
                     r.run_id,
                     r.test_case_id,
+                    r.attempt_index,
                     COALESCE(r.category, tc.category, 'unknown') AS category,
                     COALESCE(tc.oracle_type, 'unknown') AS oracle_type,
                     r.actual_answer,
@@ -135,9 +166,12 @@ class DataProvider:
                     r.is_correct,
                     r.score,
                     r.latency_ms,
+                    r.latency_source,
                     r.error_type,
                     r.error_taxonomy,
-                    COALESCE(tr.finished_at, tr.started_at) AS timestamp
+                    r.critical_error_flag,
+                    COALESCE(r.normalized_answer, r.actual_answer_normalized, r.actual_answer) AS normalized_answer,
+                    COALESCE(tr.finished_at, tr.created_at, tr.started_at) AS timestamp
                 FROM test_results r
                 LEFT JOIN test_cases tc
                     ON tc.test_case_id = r.test_case_id
@@ -151,7 +185,7 @@ class DataProvider:
 
         prepared = self._prepare_loaded_data(runs_df=runs_df, cases_df=cases_df, results_df=results_df)
         prepared.source = "duckdb"
-        prepared.note = f"Loaded from {self.db_path}"
+        prepared.note = f"Loaded from DuckDB"
         return prepared
 
     def _load_from_files(self) -> LoadedData | None:
@@ -177,19 +211,13 @@ class DataProvider:
         cases_df: pd.DataFrame,
         results_df: pd.DataFrame,
     ) -> LoadedData:
-        runs = runs_df.copy()
+        runs = self._normalize_runs(runs_df)
         cases = cases_df.copy()
-        results = results_df.copy()
-
-        if "run_id" not in runs.columns and "id" in runs.columns:
-            runs = runs.rename(columns={"id": "run_id"})
-
         if "test_case_id" not in cases.columns and "id" in cases.columns:
             cases = cases.rename(columns={"id": "test_case_id"})
 
-        results = self._normalize_results(results)
+        results = self._normalize_results(results_df)
 
-        # Enrich missing category/oracle/expected_answer from test_cases when possible.
         if not cases.empty and "test_case_id" in cases.columns:
             enrich_columns = [
                 col
@@ -205,34 +233,85 @@ class DataProvider:
                         results[col] = results[col].fillna(results[case_col])
                         results = results.drop(columns=[case_col])
 
-        if "timestamp" not in results.columns or results["timestamp"].isna().all():
-            if not runs.empty and {"run_id", "finished_at", "started_at"}.intersection(runs.columns):
-                run_time_col = "finished_at" if "finished_at" in runs.columns else "started_at"
-                if run_time_col in runs.columns:
-                    results = results.merge(
-                        runs[["run_id", run_time_col]].drop_duplicates("run_id"),
-                        on="run_id",
-                        how="left",
-                        suffixes=("", "_run"),
-                    )
-                    if "timestamp" not in results.columns:
-                        results["timestamp"] = results[run_time_col]
-                    else:
-                        results["timestamp"] = results["timestamp"].fillna(results[run_time_col])
-                    if run_time_col in results.columns:
-                        results = results.drop(columns=[run_time_col])
+        if not runs.empty:
+            run_enrich = runs[["run_id", "mode", "created_at"]].drop_duplicates("run_id")
+            results = results.merge(run_enrich, on="run_id", how="left", suffixes=("", "_run"))
+
+            results["timestamp"] = results["timestamp"].fillna(results["created_at"])
+            # If latency source is not provided, infer from mode for explainability.
+            missing_latency_source = results["latency_source"].isna() | (results["latency_source"].astype(str).str.len() == 0)
+            results.loc[missing_latency_source & (results["mode"] == "mock"), "latency_source"] = "mock_simulated"
+            results.loc[missing_latency_source & (results["mode"] != "mock"), "latency_source"] = "observed"
+
+            results = results.drop(columns=[col for col in ["mode", "created_at"] if col in results.columns])
 
         results["timestamp"] = pd.to_datetime(results["timestamp"], errors="coerce")
-        return LoadedData(runs=runs, cases=cases, results=results, source="", note="")
+        return LoadedData(runs=runs, cases=cases, results=results[REQUIRED_RESULT_COLUMNS], source="", note="")
+
+    def _normalize_runs(self, runs_df: pd.DataFrame) -> pd.DataFrame:
+        runs = runs_df.copy()
+        if runs.empty:
+            return pd.DataFrame(columns=REQUIRED_RUN_COLUMNS)
+
+        if "run_id" not in runs.columns and "id" in runs.columns:
+            runs = runs.rename(columns={"id": "run_id"})
+
+        # Graceful fallbacks for legacy schema fields.
+        if "created_at" not in runs.columns:
+            if "started_at" in runs.columns:
+                runs["created_at"] = runs["started_at"]
+            elif "finished_at" in runs.columns:
+                runs["created_at"] = runs["finished_at"]
+            else:
+                runs["created_at"] = pd.Timestamp.utcnow()
+
+        runs["created_at"] = pd.to_datetime(runs["created_at"], errors="coerce")
+        runs["name"] = self._series_or_default(runs, "name", "").fillna("")
+        runs["model_name"] = self._series_or_default(runs, "model_name", "unknown-model").fillna("unknown-model")
+        runs["provider"] = self._series_or_default(runs, "provider", "local").fillna("local")
+        runs["model_version"] = self._series_or_default(runs, "model_version", "n/a").fillna("n/a")
+        runs["dataset_version"] = self._series_or_default(runs, "dataset_version", "v1").fillna("v1")
+        runs["temperature"] = pd.to_numeric(self._series_or_default(runs, "temperature", 0.0), errors="coerce").fillna(0.0)
+        if "repeat_count" in runs.columns:
+            runs["repeat_count"] = pd.to_numeric(runs["repeat_count"], errors="coerce").fillna(1).astype(int)
+        else:
+            runs["repeat_count"] = pd.to_numeric(self._series_or_default(runs, "repetition_index", 1), errors="coerce").fillna(1).astype(int)
+
+        inferred_mode = runs["mode"] if "mode" in runs.columns else None
+        if inferred_mode is None:
+            inferred_mode = runs["model_name"].astype(str).str.lower().apply(
+                lambda value: "mock" if "mock" in value else "real"
+            )
+        runs["mode"] = inferred_mode.fillna("mock")
+
+        runs["notes"] = self._series_or_default(runs, "notes", "").fillna("")
+        runs["run_group_id"] = self._series_or_default(runs, "run_group_id", "").fillna("")
+        runs["repetition_index"] = pd.to_numeric(self._series_or_default(runs, "repetition_index", 1), errors="coerce").fillna(1).astype(int)
+        runs["status"] = self._series_or_default(runs, "status", "completed").fillna("completed")
+
+        if "run_label" not in runs.columns:
+            runs["run_label"] = ""
+        runs["run_label"] = runs["run_label"].fillna("")
+
+        missing_label = runs["run_label"].astype(str).str.strip().eq("")
+        runs.loc[missing_label, "run_label"] = runs[missing_label].apply(
+            lambda row: self._build_run_label(
+                model_name=str(row["model_name"]),
+                dataset_version=str(row["dataset_version"]),
+                created_at=row["created_at"],
+            ),
+            axis=1,
+        )
+
+        return runs[[col for col in REQUIRED_RUN_COLUMNS if col in runs.columns]]
 
     def _normalize_results(self, results_df: pd.DataFrame) -> pd.DataFrame:
         results = results_df.copy()
 
-        # Harmonize common column aliases from external exports.
         alias_map = {
             "id": "result_id",
             "expected_answer_normalized": "expected_answer",
-            "actual_answer_normalized": "actual_answer",
+            "actual_answer_normalized": "normalized_answer",
             "created_at": "timestamp",
             "finished_at": "timestamp",
         }
@@ -244,18 +323,23 @@ class DataProvider:
             if column not in results.columns:
                 results[column] = None
 
+        if "attempt_index" not in results.columns or results["attempt_index"].isna().all():
+            if "result_id" in results.columns:
+                results["attempt_index"] = (
+                    results["result_id"].astype(str).str.split(":").str[-1].str.extract(r"(\d+)")[0]
+                )
+            else:
+                results["attempt_index"] = 1
+
+        results["attempt_index"] = pd.to_numeric(results["attempt_index"], errors="coerce").fillna(1).astype(int)
+
         if results["result_id"].isna().any() or (results["result_id"].astype(str).str.len() == 0).any():
-            attempt = (
-                results["attempt_index"].fillna(1).astype(int)
-                if "attempt_index" in results.columns
-                else 1
-            )
             results["result_id"] = (
                 results["run_id"].astype(str)
                 + ":"
                 + results["test_case_id"].astype(str)
                 + ":"
-                + pd.Series(attempt, index=results.index).astype(str)
+                + results["attempt_index"].astype(str)
             )
 
         results["is_correct"] = results["is_correct"].fillna(False).astype(bool)
@@ -265,10 +349,18 @@ class DataProvider:
         results["test_case_id"] = results["test_case_id"].astype(str)
         results["category"] = results["category"].fillna("unknown").astype(str)
         results["oracle_type"] = results["oracle_type"].fillna("unknown").astype(str)
+        results["actual_answer"] = results["actual_answer"].fillna("")
+        results["expected_answer"] = results["expected_answer"].fillna("")
         results["error_type"] = results["error_type"].fillna("")
         results["error_taxonomy"] = results["error_taxonomy"].fillna("none")
+        results["normalized_answer"] = results["normalized_answer"].fillna(results["actual_answer"]).astype(str)
 
-        return results[REQUIRED_RESULT_COLUMNS]
+        results["critical_error_flag"] = results["critical_error_flag"].fillna(False)
+        if results["critical_error_flag"].dtype != bool:
+            tax = results["error_taxonomy"].astype(str).str.lower()
+            results["critical_error_flag"] = tax.isin({"runtime", "oracle", "timeout", "unknown"})
+
+        return results
 
     def _load_table_file(self, table_name: str) -> pd.DataFrame | None:
         for path in self._table_file_candidates(table_name):
@@ -306,22 +398,41 @@ class DataProvider:
         return candidates
 
     def _load_mock_data(self) -> LoadedData:
-        # Minimal mock dataset keeps dashboard runnable even when storage is empty.
         runs = pd.DataFrame(
             [
                 {
                     "run_id": "mock-run-1",
                     "name": "mock-baseline",
+                    "run_label": "mock-llm | v_mock | 2026-03-01 09:00",
                     "model_name": "mock-llm",
+                    "provider": "local",
+                    "model_version": "v1",
                     "dataset_version": "v_mock",
+                    "created_at": "2026-03-01T09:00:00Z",
+                    "temperature": 0.0,
+                    "repeat_count": 2,
+                    "mode": "mock",
+                    "notes": "Baseline mock run",
+                    "run_group_id": "mock-group",
                     "repetition_index": 1,
+                    "status": "completed",
                 },
                 {
                     "run_id": "mock-run-2",
                     "name": "mock-improved",
+                    "run_label": "mock-llm-v2 | v_mock | 2026-03-01 10:00",
                     "model_name": "mock-llm-v2",
+                    "provider": "local",
+                    "model_version": "v2",
                     "dataset_version": "v_mock",
+                    "created_at": "2026-03-01T10:00:00Z",
+                    "temperature": 0.0,
+                    "repeat_count": 2,
+                    "mode": "mock",
+                    "notes": "Improved prompt setup",
+                    "run_group_id": "mock-group",
                     "repetition_index": 2,
+                    "status": "completed",
                 },
             ]
         )
@@ -337,126 +448,29 @@ class DataProvider:
 
         results = pd.DataFrame(
             [
-                {
-                    "result_id": "mock-run-1:tc-1:1",
-                    "run_id": "mock-run-1",
-                    "test_case_id": "tc-1",
-                    "category": "factual_qa",
-                    "oracle_type": "exact_match",
-                    "actual_answer": "Paris",
-                    "expected_answer": "Paris",
-                    "is_correct": True,
-                    "score": 1.0,
-                    "latency_ms": 110,
-                    "error_type": "",
-                    "timestamp": "2026-03-01T09:00:00Z",
-                },
-                {
-                    "result_id": "mock-run-1:tc-2:1",
-                    "run_id": "mock-run-1",
-                    "test_case_id": "tc-2",
-                    "category": "classification",
-                    "oracle_type": "keyword_match",
-                    "actual_answer": "neutral",
-                    "expected_answer": "positive",
-                    "is_correct": False,
-                    "score": 0.0,
-                    "latency_ms": 140,
-                    "error_type": "wrong_answer",
-                    "timestamp": "2026-03-01T09:00:00Z",
-                },
-                {
-                    "result_id": "mock-run-1:tc-3:1",
-                    "run_id": "mock-run-1",
-                    "test_case_id": "tc-3",
-                    "category": "numeric_reasoning",
-                    "oracle_type": "numeric_tolerance",
-                    "actual_answer": "42",
-                    "expected_answer": "42",
-                    "is_correct": True,
-                    "score": 1.0,
-                    "latency_ms": 160,
-                    "error_type": "",
-                    "timestamp": "2026-03-01T09:00:00Z",
-                },
-                {
-                    "result_id": "mock-run-1:tc-4:1",
-                    "run_id": "mock-run-1",
-                    "test_case_id": "tc-4",
-                    "category": "format_constrained_json",
-                    "oracle_type": "json_schema",
-                    "actual_answer": "{}",
-                    "expected_answer": "{\"type\":\"object\"}",
-                    "is_correct": True,
-                    "score": 1.0,
-                    "latency_ms": 130,
-                    "error_type": "",
-                    "timestamp": "2026-03-01T09:00:00Z",
-                },
-                {
-                    "result_id": "mock-run-2:tc-1:1",
-                    "run_id": "mock-run-2",
-                    "test_case_id": "tc-1",
-                    "category": "factual_qa",
-                    "oracle_type": "exact_match",
-                    "actual_answer": "Paris",
-                    "expected_answer": "Paris",
-                    "is_correct": True,
-                    "score": 1.0,
-                    "latency_ms": 90,
-                    "error_type": "",
-                    "timestamp": "2026-03-01T10:00:00Z",
-                },
-                {
-                    "result_id": "mock-run-2:tc-2:1",
-                    "run_id": "mock-run-2",
-                    "test_case_id": "tc-2",
-                    "category": "classification",
-                    "oracle_type": "keyword_match",
-                    "actual_answer": "positive",
-                    "expected_answer": "positive",
-                    "is_correct": True,
-                    "score": 1.0,
-                    "latency_ms": 120,
-                    "error_type": "",
-                    "timestamp": "2026-03-01T10:00:00Z",
-                },
-                {
-                    "result_id": "mock-run-2:tc-3:1",
-                    "run_id": "mock-run-2",
-                    "test_case_id": "tc-3",
-                    "category": "numeric_reasoning",
-                    "oracle_type": "numeric_tolerance",
-                    "actual_answer": "41.9",
-                    "expected_answer": "42",
-                    "is_correct": True,
-                    "score": 0.95,
-                    "latency_ms": 125,
-                    "error_type": "",
-                    "timestamp": "2026-03-01T10:00:00Z",
-                },
-                {
-                    "result_id": "mock-run-2:tc-4:1",
-                    "run_id": "mock-run-2",
-                    "test_case_id": "tc-4",
-                    "category": "format_constrained_json",
-                    "oracle_type": "json_schema",
-                    "actual_answer": "{\"value\":1}",
-                    "expected_answer": "{\"type\":\"object\"}",
-                    "is_correct": True,
-                    "score": 1.0,
-                    "latency_ms": 105,
-                    "error_type": "",
-                    "timestamp": "2026-03-01T10:00:00Z",
-                },
+                {"result_id": "mock-run-1:tc-1:1", "run_id": "mock-run-1", "test_case_id": "tc-1", "attempt_index": 1, "category": "factual_qa", "oracle_type": "exact_match", "actual_answer": "Paris", "expected_answer": "Paris", "is_correct": True, "score": 1.0, "latency_ms": 2.2, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "paris", "timestamp": "2026-03-01T09:00:00Z"},
+                {"result_id": "mock-run-1:tc-1:2", "run_id": "mock-run-1", "test_case_id": "tc-1", "attempt_index": 2, "category": "factual_qa", "oracle_type": "exact_match", "actual_answer": "Paris", "expected_answer": "Paris", "is_correct": True, "score": 1.0, "latency_ms": 2.5, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "paris", "timestamp": "2026-03-01T09:00:00Z"},
+                {"result_id": "mock-run-1:tc-2:1", "run_id": "mock-run-1", "test_case_id": "tc-2", "attempt_index": 1, "category": "classification", "oracle_type": "keyword_match", "actual_answer": "neutral", "expected_answer": "positive", "is_correct": False, "score": 0.0, "latency_ms": 2.9, "latency_source": "mock_simulated", "error_type": "wrong_answer", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "neutral", "timestamp": "2026-03-01T09:00:00Z"},
+                {"result_id": "mock-run-2:tc-1:1", "run_id": "mock-run-2", "test_case_id": "tc-1", "attempt_index": 1, "category": "factual_qa", "oracle_type": "exact_match", "actual_answer": "Paris", "expected_answer": "Paris", "is_correct": True, "score": 1.0, "latency_ms": 1.8, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "paris", "timestamp": "2026-03-01T10:00:00Z"},
+                {"result_id": "mock-run-2:tc-2:1", "run_id": "mock-run-2", "test_case_id": "tc-2", "attempt_index": 1, "category": "classification", "oracle_type": "keyword_match", "actual_answer": "positive", "expected_answer": "positive", "is_correct": True, "score": 1.0, "latency_ms": 2.1, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "positive", "timestamp": "2026-03-01T10:00:00Z"},
+                {"result_id": "mock-run-2:tc-3:1", "run_id": "mock-run-2", "test_case_id": "tc-3", "attempt_index": 1, "category": "numeric_reasoning", "oracle_type": "numeric_tolerance", "actual_answer": "41.9", "expected_answer": "42", "is_correct": True, "score": 0.95, "latency_ms": 2.3, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "41.9", "timestamp": "2026-03-01T10:00:00Z"},
+                {"result_id": "mock-run-2:tc-4:1", "run_id": "mock-run-2", "test_case_id": "tc-4", "attempt_index": 1, "category": "format_constrained_json", "oracle_type": "json_schema", "actual_answer": "{\"value\":1}", "expected_answer": "{\"type\":\"object\"}", "is_correct": True, "score": 1.0, "latency_ms": 2.0, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "{\"value\":1}", "timestamp": "2026-03-01T10:00:00Z"},
             ]
         )
 
-        results["timestamp"] = pd.to_datetime(results["timestamp"], errors="coerce")
-        return LoadedData(
-            runs=runs,
-            cases=cases,
-            results=results,
-            source="mock",
-            note="No stored data found. Showing built-in mock data for dashboard demo.",
-        )
+        prepared = self._prepare_loaded_data(runs_df=runs, cases_df=cases, results_df=results)
+        prepared.source = "mock"
+        prepared.note = "No stored data found. Showing built-in mock data for dashboard demo."
+        return prepared
+
+    def _build_run_label(self, model_name: str, dataset_version: str, created_at: pd.Timestamp | None) -> str:
+        if created_at is None or pd.isna(created_at):
+            created_fragment = "unknown-time"
+        else:
+            created_fragment = created_at.strftime("%Y-%m-%d %H:%M")
+        return f"{model_name} | {dataset_version} | {created_fragment}"
+
+    def _series_or_default(self, frame: pd.DataFrame, column: str, default_value: object) -> pd.Series:
+        if column in frame.columns:
+            return frame[column]
+        return pd.Series([default_value] * len(frame), index=frame.index)

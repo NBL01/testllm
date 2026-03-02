@@ -35,8 +35,14 @@ class LoadTestCasesResponse(BaseModel):
 class RunBatchRequest(BaseModel):
     input_path: str = "sample_test_cases.jsonl"
     run_name: str = "demo-run"
+    run_label: str | None = None
     model_name: str = "mock-llm"
+    provider: str = "local"
+    model_version: str = "n/a"
     dataset_version: str | None = None
+    temperature: float = 0.0
+    run_mode: Literal["mock", "real", "offline_replay"] = "mock"
+    notes: str = ""
     run_group_id: str | None = None
     mode: Literal["deterministic", "semi_random"] = "deterministic"
     seed: int = 42
@@ -74,8 +80,14 @@ def run_batch_endpoint(request: RunBatchRequest) -> RunBatchResponse:
         result = run_batch_workflow(
             input_path=request.input_path,
             run_name=request.run_name,
+            run_label=request.run_label,
             model_name=request.model_name,
+            provider=request.provider,
+            model_version=request.model_version,
             dataset_version=request.dataset_version,
+            temperature=request.temperature,
+            run_mode=request.run_mode,
+            notes=request.notes,
             run_group_id=request.run_group_id,
             mode=request.mode,
             seed=request.seed,
