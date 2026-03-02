@@ -25,6 +25,11 @@ llm-reliability-analytics/
     storage/
     workflow/
     main.py
+  frontend/
+    streamlit_app.py
+    components/
+    services/
+    utils/
   tests/
   notebooks/
   requirements.txt
@@ -70,6 +75,12 @@ uvicorn llm_reliability_analytics.main:app --app-dir src --reload
 ```
 
 4. Open docs at `http://127.0.0.1:8000/docs`.
+
+5. Run the Streamlit dashboard:
+
+```bash
+streamlit run frontend/streamlit_app.py
+```
 
 ## API Endpoints
 
