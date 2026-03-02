@@ -14,6 +14,7 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 from llm_reliability_analytics.models.domain import (
+    EvaluationMode,
     ErrorTaxonomy,
     RunStatus,
     TestCase,
@@ -30,8 +31,10 @@ class RunAggregatedSummary(BaseModel):
     provider: str = ""
     model_version: str = ""
     dataset_version: str = "v1"
+    evaluation_mode: str = "regression"
     created_at: datetime | None = None
     temperature: float = 0.0
+    max_output_tokens: int = Field(default=128, ge=1)
     repeat_count: int = Field(default=1, ge=1)
     mode: str = "mock"
     notes: str = ""
@@ -63,6 +66,7 @@ def upsert_test_cases(test_cases: list[TestCase]) -> int:
     rows = [
         (
             test_case.id,
+            test_case.test_source.value,
             test_case.dataset_version,
             test_case.category,
             test_case.difficulty.value,
@@ -77,6 +81,7 @@ def upsert_test_cases(test_cases: list[TestCase]) -> int:
         """
         INSERT INTO test_cases (
             test_case_id,
+            test_source,
             dataset_version,
             category,
             difficulty,
@@ -85,7 +90,7 @@ def upsert_test_cases(test_cases: list[TestCase]) -> int:
             oracle_type,
             metadata
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         rows,
     )
@@ -104,8 +109,10 @@ def create_test_run(
     provider: str = "local",
     model_version: str = "n/a",
     dataset_version: str = "v1",
+    evaluation_mode: str = EvaluationMode.REGRESSION.value,
     created_at: datetime | None = None,
     temperature: float = 0.0,
+    max_output_tokens: int = 128,
     repeat_count: int = 1,
     mode: str = "mock",
     notes: str = "",
@@ -127,8 +134,10 @@ def create_test_run(
         provider=provider,
         model_version=model_version,
         dataset_version=dataset_version,
+        evaluation_mode=evaluation_mode,
         created_at=resolved_created_at,
         temperature=temperature,
+        max_output_tokens=max(1, int(max_output_tokens)),
         repeat_count=max(1, int(repeat_count)),
         mode=mode,
         notes=notes,
@@ -151,8 +160,10 @@ def create_test_run(
             provider,
             model_version,
             dataset_version,
+            evaluation_mode,
             created_at,
             temperature,
+            max_output_tokens,
             repeat_count,
             mode,
             notes,
@@ -163,7 +174,7 @@ def create_test_run(
             finished_at,
             metadata
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         [
             run.id,
@@ -173,8 +184,10 @@ def create_test_run(
             run.provider,
             run.model_version,
             run.dataset_version,
+            run.evaluation_mode.value,
             run.created_at,
             run.temperature,
+            run.max_output_tokens,
             run.repeat_count,
             run.mode,
             run.notes,
@@ -198,9 +211,6 @@ def insert_batch_results(results: list[TestResult]) -> int:
     run_id = results[0].run_id
     conn = get_connection()
 
-    # Idempotent for repeated demo runs with the same run_id.
-    conn.execute("DELETE FROM test_results WHERE run_id = ?;", [run_id])
-
     rows = [
         (
             result.run_id,
@@ -208,6 +218,12 @@ def insert_batch_results(results: list[TestResult]) -> int:
             result.attempt_index,
             result.dataset_version,
             result.category,
+            result.test_source,
+            result.prompt,
+            result.expected_answer,
+            result.oracle_type,
+            result.raw_output,
+            result.normalized_output,
             result.actual_answer,
             result.expected_answer_normalized,
             result.actual_answer_normalized,
@@ -216,6 +232,8 @@ def insert_batch_results(results: list[TestResult]) -> int:
             result.latency_ms,
             result.latency_source,
             result.error_type,
+            result.explanation,
+            result.oracle_details_json,
             result.error_taxonomy.value,
             result.critical_error_flag,
             result.normalized_answer,
@@ -224,12 +242,18 @@ def insert_batch_results(results: list[TestResult]) -> int:
     ]
     conn.executemany(
         """
-        INSERT INTO test_results (
+        INSERT OR REPLACE INTO test_results (
             run_id,
             test_case_id,
             attempt_index,
             dataset_version,
             category,
+            test_source,
+            prompt,
+            expected_answer,
+            oracle_type,
+            raw_output,
+            normalized_output,
             actual_answer,
             expected_answer_normalized,
             actual_answer_normalized,
@@ -238,11 +262,13 @@ def insert_batch_results(results: list[TestResult]) -> int:
             latency_ms,
             latency_source,
             error_type,
+            explanation,
+            oracle_details_json,
             error_taxonomy,
             critical_error_flag,
             normalized_answer
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         rows,
     )
@@ -279,8 +305,10 @@ def fetch_aggregated_summaries(run_id: str | None = None) -> list[RunAggregatedS
             tr.provider,
             tr.model_version,
             tr.dataset_version,
+            tr.evaluation_mode,
             tr.created_at,
             tr.temperature,
+            tr.max_output_tokens,
             tr.repeat_count,
             tr.mode,
             tr.notes,
@@ -302,8 +330,10 @@ def fetch_aggregated_summaries(run_id: str | None = None) -> list[RunAggregatedS
             tr.provider,
             tr.model_version,
             tr.dataset_version,
+            tr.evaluation_mode,
             tr.created_at,
             tr.temperature,
+            tr.max_output_tokens,
             tr.repeat_count,
             tr.mode,
             tr.notes,
@@ -351,18 +381,20 @@ def fetch_aggregated_summaries(run_id: str | None = None) -> list[RunAggregatedS
                 provider=row[3] or "",
                 model_version=row[4] or "",
                 dataset_version=row[5],
-                created_at=row[6],
-                temperature=float(row[7] or 0.0),
-                repeat_count=int(row[8] or 1),
-                mode=row[9] or "mock",
-                notes=row[10] or "",
-                run_group_id=row[11],
-                repetition_index=int(row[12]),
-                total_test_cases=int(row[13]),
-                passed=int(row[14]),
-                failed=int(row[15]),
-                accuracy=float(row[16]) if row[16] is not None else 0.0,
-                average_latency_ms=float(row[17]) if row[17] is not None else 0.0,
+                evaluation_mode=row[6] or EvaluationMode.REGRESSION.value,
+                created_at=row[7],
+                temperature=float(row[8] or 0.0),
+                max_output_tokens=int(row[9] or 128),
+                repeat_count=int(row[10] or 1),
+                mode=row[11] or "mock",
+                notes=row[12] or "",
+                run_group_id=row[13],
+                repetition_index=int(row[14]),
+                total_test_cases=int(row[15]),
+                passed=int(row[16]),
+                failed=int(row[17]),
+                accuracy=float(row[18]) if row[18] is not None else 0.0,
+                average_latency_ms=float(row[19]) if row[19] is not None else 0.0,
                 error_distribution=error_distribution,
                 error_taxonomy_distribution=error_taxonomy_distribution,
             )
@@ -383,7 +415,12 @@ def fetch_results_for_run(run_id: str) -> list[TestResult]:
             r.attempt_index,
             r.dataset_version,
             r.category,
-            tc.oracle_type,
+            r.test_source,
+            r.prompt,
+            COALESCE(r.expected_answer, tc.expected_answer),
+            COALESCE(r.oracle_type, tc.oracle_type),
+            r.raw_output,
+            r.normalized_output,
             r.actual_answer,
             r.expected_answer_normalized,
             r.actual_answer_normalized,
@@ -392,6 +429,8 @@ def fetch_results_for_run(run_id: str) -> list[TestResult]:
             r.latency_ms,
             r.latency_source,
             r.error_type,
+            r.explanation,
+            r.oracle_details_json,
             r.error_taxonomy,
             r.critical_error_flag,
             r.normalized_answer
@@ -412,18 +451,25 @@ def fetch_results_for_run(run_id: str) -> list[TestResult]:
             attempt_index=int(row[2]),
             dataset_version=row[3],
             category=row[4],
-            oracle_type=row[5],
-            actual_answer=row[6],
-            expected_answer_normalized=row[7],
-            actual_answer_normalized=row[8],
-            is_correct=bool(row[9]),
-            score=float(row[10]),
-            latency_ms=float(row[11]),
-            latency_source=row[12] or "measured",
-            error_type=row[13],
-            error_taxonomy=ErrorTaxonomy(row[14]) if row[14] else ErrorTaxonomy.NONE,
-            critical_error_flag=bool(row[15]),
-            normalized_answer=row[16],
+            test_source=row[5],
+            prompt=row[6],
+            expected_answer=row[7],
+            oracle_type=row[8],
+            raw_output=row[9],
+            normalized_output=row[10],
+            actual_answer=row[11],
+            expected_answer_normalized=row[12],
+            actual_answer_normalized=row[13],
+            is_correct=bool(row[14]),
+            score=float(row[15]),
+            latency_ms=float(row[16]),
+            latency_source=row[17] or "measured",
+            error_type=row[18],
+            explanation=row[19],
+            oracle_details_json=row[20],
+            error_taxonomy=ErrorTaxonomy(row[21]) if row[21] else ErrorTaxonomy.NONE,
+            critical_error_flag=bool(row[22]),
+            normalized_answer=row[23],
         )
         for row in rows
     ]

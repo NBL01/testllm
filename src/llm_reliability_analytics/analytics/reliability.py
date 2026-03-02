@@ -3,6 +3,7 @@ from math import ceil
 
 from pydantic import BaseModel, Field
 
+from llm_reliability_analytics.analytics.coverage_metrics import compute_coverage_metrics
 from llm_reliability_analytics.models.domain import (
     CategoryLevelReport,
     ErrorTaxonomy,
@@ -72,6 +73,13 @@ class ReliabilityReport(BaseModel):
     schema_compliance_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     critical_error_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     failure_density_per_1000: float = Field(default=0.0, ge=0.0)
+    category_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    source_coverage: int = Field(default=0, ge=0)
+    failure_concentration: float = Field(default=0.0, ge=0.0, le=1.0)
+    zero_score_categories: int = Field(default=0, ge=0)
+    low_score_cases: int = Field(default=0, ge=0)
+    source_distribution: dict[str, int] = Field(default_factory=dict)
+    failure_by_source: dict[str, int] = Field(default_factory=dict)
     unstable_case_count: int = Field(default=0, ge=0)
     unstable_case_ids: list[str] = Field(default_factory=list)
     weakest_categories: list[WeakCategorySummary] = Field(default_factory=list)
@@ -86,6 +94,7 @@ def compute_reliability_report(
     dataset_version: str | None = None,
     repetition_index: int | None = None,
     latency_slo_ms: float = 1000.0,
+    low_score_threshold: float = 0.3,
 ) -> ReliabilityReport:
     """Compute reliability analytics from a list of TestResult objects.
 
@@ -161,6 +170,7 @@ def compute_reliability_report(
     schema_compliance_rate = _compute_schema_compliance_rate(results)
     critical_error_rate = _compute_critical_error_rate(results)
     failure_density_per_1000 = (failed / total_test_cases) * 1000.0
+    coverage_metrics = compute_coverage_metrics(results=results, low_score_threshold=low_score_threshold)
 
     latency_score = _compute_latency_score(average_latency_ms=average_latency_ms, latency_slo_ms=latency_slo_ms)
     failure_density_score = _clamp01(1.0 - (failure_density_per_1000 / 1000.0))
@@ -195,6 +205,11 @@ def compute_reliability_report(
         schema_compliance_rate=schema_compliance_rate,
         critical_error_rate=critical_error_rate,
         failure_density_per_1000=failure_density_per_1000,
+        category_coverage=coverage_metrics.category_coverage,
+        source_coverage=coverage_metrics.source_coverage,
+        failure_concentration=coverage_metrics.failure_concentration,
+        zero_score_categories=coverage_metrics.zero_score_categories,
+        low_score_cases=coverage_metrics.low_score_cases,
         unstable_case_count=len(unstable_case_ids),
         error_taxonomy_distribution=error_taxonomy_distribution,
     )
@@ -221,6 +236,13 @@ def compute_reliability_report(
         schema_compliance_rate=schema_compliance_rate,
         critical_error_rate=critical_error_rate,
         failure_density_per_1000=failure_density_per_1000,
+        category_coverage=coverage_metrics.category_coverage,
+        source_coverage=coverage_metrics.source_coverage,
+        failure_concentration=coverage_metrics.failure_concentration,
+        zero_score_categories=coverage_metrics.zero_score_categories,
+        low_score_cases=coverage_metrics.low_score_cases,
+        source_distribution=coverage_metrics.source_distribution,
+        failure_by_source=coverage_metrics.failure_by_source,
         unstable_case_count=len(unstable_case_ids),
         unstable_case_ids=unstable_case_ids,
         weakest_categories=weakest_categories,
@@ -309,6 +331,11 @@ def _empty_report(run_id: str, dataset_version: str, repetition_index: int) -> R
         schema_compliance_rate=0.0,
         critical_error_rate=0.0,
         failure_density_per_1000=0.0,
+        category_coverage=0.0,
+        source_coverage=0,
+        failure_concentration=0.0,
+        zero_score_categories=0,
+        low_score_cases=0,
         unstable_case_count=0,
         error_taxonomy_distribution={},
     )
@@ -334,6 +361,13 @@ def _empty_report(run_id: str, dataset_version: str, repetition_index: int) -> R
         schema_compliance_rate=0.0,
         critical_error_rate=0.0,
         failure_density_per_1000=0.0,
+        category_coverage=0.0,
+        source_coverage=0,
+        failure_concentration=0.0,
+        zero_score_categories=0,
+        low_score_cases=0,
+        source_distribution={},
+        failure_by_source={},
         unstable_case_count=0,
         unstable_case_ids=[],
         weakest_categories=[],

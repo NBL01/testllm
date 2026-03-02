@@ -20,3 +20,10 @@ def render_kpi_cards(report: ReliabilityReport) -> None:
     cols2[1].metric("Avg Latency", ms(report.average_latency_ms))
     cols2[2].metric("P95 Latency", ms(report.p95_latency_ms))
     cols2[3].metric("Reliability Score", score(report.overall_reliability_score))
+
+    cols3 = st.columns(5)
+    cols3[0].metric("Category Coverage", pct(report.category_coverage))
+    cols3[1].metric("Source Coverage", as_int(report.source_coverage))
+    cols3[2].metric("Failure Concentration", pct(report.failure_concentration))
+    cols3[3].metric("Zero-Score Categories", as_int(report.zero_score_categories))
+    cols3[4].metric("Low-Score Cases", as_int(report.low_score_cases))

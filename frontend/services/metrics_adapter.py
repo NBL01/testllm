@@ -7,6 +7,7 @@ from typing import Any
 
 import pandas as pd
 
+from llm_reliability_analytics.analytics.insights import generate_run_insights
 from llm_reliability_analytics.analytics.reliability import (
     ReliabilityReport,
     RunComparisonReport,
@@ -30,6 +31,15 @@ class RunInsights:
     strongest_category: str
     most_frequent_error_type: str
     improvement_status: str
+    failure_heavy_source: str
+    promotion_hint: str
+
+
+@dataclass
+class ModelAggregateReport:
+    model_name: str
+    run_ids: list[str]
+    report: ReliabilityReport
 
 
 class MetricsAdapter:
@@ -204,6 +214,101 @@ class MetricsAdapter:
             category_delta=category_delta,
         )
 
+    def build_multi_run_model_reports(
+        self,
+        results_df: pd.DataFrame,
+        runs_df: pd.DataFrame,
+        runs_per_model: int = 3,
+        selected_models: list[str] | None = None,
+        evaluation_mode: str | None = None,
+        dataset_version: str | None = None,
+    ) -> list[ModelAggregateReport]:
+        if runs_df.empty or results_df.empty:
+            return []
+
+        runs = runs_df.copy()
+        runs["created_at"] = pd.to_datetime(runs["created_at"], errors="coerce")
+        runs["model_name"] = runs["model_name"].fillna("unknown-model").astype(str)
+
+        if selected_models:
+            selected = {str(model) for model in selected_models}
+            runs = runs[runs["model_name"].isin(selected)]
+
+        if evaluation_mode:
+            runs = runs[runs["evaluation_mode"].astype(str) == str(evaluation_mode)]
+
+        if dataset_version:
+            runs = runs[runs["dataset_version"].astype(str) == str(dataset_version)]
+
+        if runs.empty:
+            return []
+
+        runs = runs.sort_values(["created_at", "run_id"], ascending=[False, False])
+        reports: list[ModelAggregateReport] = []
+
+        for model_name, group in runs.groupby("model_name"):
+            selected_runs = group.head(max(1, int(runs_per_model)))
+            selected_run_ids = selected_runs["run_id"].astype(str).tolist()
+            model_rows = results_df[results_df["run_id"].astype(str).isin(selected_run_ids)].copy()
+            if model_rows.empty:
+                continue
+
+            median_results = self._build_median_case_results(
+                model_rows=model_rows,
+                model_name=model_name,
+            )
+            if not median_results:
+                continue
+
+            dataset_values = selected_runs["dataset_version"].dropna().astype(str).unique().tolist()
+            resolved_dataset_version = dataset_values[0] if len(dataset_values) == 1 else "mixed"
+            synthetic_run_id = f"model-median::{model_name}"
+            report = compute_reliability_report(
+                median_results,
+                run_id=synthetic_run_id,
+                dataset_version=resolved_dataset_version,
+                repetition_index=1,
+            )
+            reports.append(
+                ModelAggregateReport(
+                    model_name=model_name,
+                    run_ids=selected_run_ids,
+                    report=report,
+                )
+            )
+
+        reports.sort(key=lambda item: item.report.overall_reliability_score, reverse=True)
+        return reports
+
+    def multi_run_model_summary_table(self, model_reports: list[ModelAggregateReport]) -> pd.DataFrame:
+        rows = [
+            {
+                "model_name": item.model_name,
+                "runs_used": len(item.run_ids),
+                "accuracy": item.report.accuracy,
+                "reliability_score": item.report.overall_reliability_score,
+                "avg_latency_ms": item.report.average_latency_ms,
+                "p95_latency_ms": item.report.p95_latency_ms,
+                "total_cases": item.report.total_test_cases,
+                "passed": item.report.passed,
+                "failed": item.report.failed,
+            }
+            for item in model_reports
+        ]
+        return pd.DataFrame(rows)
+
+    def multi_run_category_delta(
+        self,
+        model_reports: list[ModelAggregateReport],
+        baseline_model: str,
+        candidate_model: str,
+    ) -> pd.DataFrame:
+        baseline = next((item.report for item in model_reports if item.model_name == baseline_model), None)
+        candidate = next((item.report for item in model_reports if item.model_name == candidate_model), None)
+        if baseline is None or candidate is None:
+            return pd.DataFrame(columns=["category", "baseline_accuracy", "candidate_accuracy", "delta"])
+        return self._category_delta_table(baseline=baseline, candidate=candidate)
+
     def latest_previous_run_id(self, runs_df: pd.DataFrame, run_id: str) -> str | None:
         if runs_df.empty or "run_id" not in runs_df.columns:
             return None
@@ -226,21 +331,36 @@ class MetricsAdapter:
         self,
         report: ReliabilityReport,
         improvement_status: str,
+        run_rows: pd.DataFrame | None = None,
     ) -> RunInsights:
-        weakest = report.weakest_categories[0].category if report.weakest_categories else "n/a"
+        shared_results: list[TestResult] | None = None
+        if run_rows is not None and not run_rows.empty:
+            shared_results = [self._row_to_test_result(row) for row in run_rows.to_dict(orient="records")]
+        shared_payload = generate_run_insights(report=report, results=shared_results, low_score_threshold=0.2)
+        weakest = str(shared_payload.get("weakest_category", "n/a"))
 
         strongest = "n/a"
         if report.category_reports:
             strongest_item = max(report.category_reports, key=lambda item: (item.accuracy, item.total_test_cases))
             strongest = strongest_item.category
 
-        top_error = report.most_frequent_error_types[0].error_type if report.most_frequent_error_types else "none"
+        top_error = str(shared_payload.get("most_common_error_type", "none"))
+        failure_heavy_source = str(shared_payload.get("failure_heavy_source", "none"))
+        promotion_candidates = shared_payload.get("promotion_candidates", [])
+        if promotion_candidates:
+            promotion_hint = (
+                f"Promote failed case {promotion_candidates[0]} into future regression/adversarial sets."
+            )
+        else:
+            promotion_hint = "No immediate promotion candidates."
 
         return RunInsights(
             weakest_category=weakest,
             strongest_category=strongest,
             most_frequent_error_type=top_error,
             improvement_status=improvement_status,
+            failure_heavy_source=failure_heavy_source,
+            promotion_hint=promotion_hint,
         )
 
     def improvement_status_vs_previous(
@@ -283,6 +403,59 @@ class MetricsAdapter:
         merged["delta"] = merged["candidate_accuracy"] - merged["baseline_accuracy"]
         return merged.sort_values("delta", ascending=False)
 
+    def _build_median_case_results(
+        self,
+        model_rows: pd.DataFrame,
+        model_name: str,
+    ) -> list[TestResult]:
+        aggregated: list[TestResult] = []
+        synthetic_run_id = f"model-median::{model_name}"
+        grouped = model_rows.groupby("test_case_id", dropna=False)
+
+        for test_case_id, group in grouped:
+            is_correct_numeric = group["is_correct"].astype(bool).astype(int)
+            median_correctness = float(is_correct_numeric.median())
+            median_is_correct = median_correctness >= 0.5
+            median_score = float(pd.to_numeric(group["score"], errors="coerce").fillna(0.0).median())
+            median_latency = float(pd.to_numeric(group["latency_ms"], errors="coerce").fillna(0.0).median())
+
+            representative = group.iloc[0]
+            if median_is_correct:
+                correct_rows = group[group["is_correct"].astype(bool)]
+                if not correct_rows.empty:
+                    representative = correct_rows.iloc[0]
+            else:
+                failed_rows = group[~group["is_correct"].astype(bool)]
+                if not failed_rows.empty:
+                    representative = failed_rows.iloc[0]
+
+            failed_errors = group[~group["is_correct"].astype(bool)]["error_type"].dropna().astype(str)
+            chosen_error_type = failed_errors.mode().iloc[0] if (not median_is_correct and not failed_errors.empty) else None
+
+            aggregated.append(
+                TestResult(
+                    run_id=synthetic_run_id,
+                    test_case_id=str(test_case_id),
+                    attempt_index=1,
+                    category=self._as_optional_str(representative.get("category")),
+                    test_source=self._as_optional_str(representative.get("test_source")),
+                    oracle_type=self._as_optional_str(representative.get("oracle_type")),
+                    prompt=self._as_optional_str(representative.get("prompt")),
+                    expected_answer=self._as_optional_str(representative.get("expected_answer")),
+                    actual_answer=self._as_optional_str(representative.get("actual_answer")),
+                    normalized_answer=self._as_optional_str(representative.get("normalized_answer")),
+                    is_correct=median_is_correct,
+                    score=max(0.0, min(1.0, median_score)),
+                    latency_ms=max(0.0, median_latency),
+                    latency_source="median_aggregated",
+                    error_type=chosen_error_type,
+                    error_taxonomy=self._parse_taxonomy(representative.get("error_taxonomy")),
+                    critical_error_flag=bool(representative.get("critical_error_flag", False)),
+                )
+            )
+
+        return aggregated
+
     def _row_to_test_result(self, row: dict[str, Any]) -> TestResult:
         taxonomy = self._parse_taxonomy(row.get("error_taxonomy"))
         return TestResult(
@@ -290,6 +463,7 @@ class MetricsAdapter:
             test_case_id=str(row.get("test_case_id")),
             attempt_index=int(row.get("attempt_index", 1) or 1),
             category=self._as_optional_str(row.get("category")),
+            test_source=self._as_optional_str(row.get("test_source")),
             oracle_type=self._as_optional_str(row.get("oracle_type")),
             actual_answer=self._as_optional_str(row.get("actual_answer")),
             expected_answer_normalized=self._as_optional_str(row.get("expected_answer")),

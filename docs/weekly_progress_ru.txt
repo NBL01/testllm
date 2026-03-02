@@ -1,0 +1,297 @@
+СРМ / ЕЖЕНЕДЕЛЬНЫЙ ПРОГРЕСС ПРОЕКТА
+
+Тема проекта: Платформа оценки надежности LLM-систем (LLM Reliability Analytics)
+Студент: Нурланов Нурбол
+Период отчета: 1–7 недели (шаблон формата СРМ)
+
+============================================================
+1 НЕДЕЛЯ. АНАЛИЗ ТРЕБОВАНИЙ И ПОСТАНОВКА ЗАДАЧИ
+============================================================
+
+Задание:
+- Сформулировать цель проекта
+- Определить входные/выходные данные
+- Зафиксировать минимальные требования к системе
+
+Результат:
+Сформулирована цель: построить воспроизводимую систему оценки надежности LLM на основе:
+- структурированных тест-кейсов,
+- oracle-проверок корректности,
+- агрегированных метрик качества,
+- хранения результатов в локальной аналитической БД.
+
+Определены ключевые сущности:
+- TestCase (вопрос, ожидаемый ответ, тип oracle, источник теста)
+- TestRun (метаданные запуска: модель, провайдер, режим, версия датасета)
+- TestResult (фактический ответ, score, latency, ошибка)
+- ReliabilityReport (агрегированные метрики)
+
+Критерии MVP:
+- загрузка JSONL/CSV
+- запуск батча через CLI
+- оценка oracle-движком
+- сохранение результатов в DuckDB
+- визуализация в Streamlit
+
+============================================================
+2 НЕДЕЛЯ. ПРОЕКТИРОВАНИЕ АРХИТЕКТУРЫ
+============================================================
+
+Задание:
+- Разделить систему на модули
+- Определить последовательность пайплайна
+- Подготовить структуру проекта
+
+Результат:
+Спроектирована модульная архитектура:
+1. ingestion — загрузка и валидация тест-кейсов
+2. runner — выполнение промптов через выбранного клиента LLM
+3. oracles — проверка корректности и начисление score
+4. storage — таблицы DuckDB + функции записи/чтения
+5. analytics — вычисление reliability-метрик
+6. reporting — генерация markdown-отчета
+7. frontend — интерактивный Streamlit dashboard
+
+Фактическая структура репозитория (фрагмент):
+
+src/llm_reliability_analytics/
+  analytics/
+  api/
+  cli/
+  datasets/
+  ingestion/
+  models/
+  oracles/
+  reporting/
+  runner/
+  storage/
+  workflow/
+frontend/
+scripts/
+data/
+
+============================================================
+3 НЕДЕЛЯ. ПРОЕКТИРОВАНИЕ ДАННЫХ И СХЕМЫ ХРАНЕНИЯ
+============================================================
+
+Задание:
+- Спроектировать таблицы и связи
+- Зафиксировать обязательные поля для трассировки запусков
+
+Результат:
+Выбрано локальное аналитическое хранилище DuckDB (один файл, быстрые агрегаты, SQL, удобство офлайн-демо).
+
+Реализованы таблицы:
+- test_cases
+- test_runs
+- test_results
+- evaluation_traces
+
+Добавлены поля трассируемости запуска:
+- model_name, provider, dataset_version, evaluation_mode,
+- temperature, repeat_count, mode, notes, run_label.
+
+Пример кода (модель домена):
+
+class TestRun(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    name: str
+    run_label: str | None = None
+    model_name: str
+    provider: str = "local"
+    dataset_version: str = "v1"
+    evaluation_mode: EvaluationMode = EvaluationMode.REGRESSION
+    temperature: float = 0.0
+    repeat_count: int = Field(default=1, ge=1)
+    mode: str = "mock"
+
+============================================================
+4 НЕДЕЛЯ. РЕАЛИЗАЦИЯ ЗАГРУЗКИ ДАННЫХ И ДАТАСЕТОВ
+============================================================
+
+Задание:
+- Реализовать ingestion JSONL/CSV
+- Валидация через Pydantic
+- Пропуск некорректных строк с логированием
+
+Результат:
+Реализован загрузчик тестов с поддержкой файлов из data/raw/.
+
+Система:
+- валидирует каждую запись,
+- считает total/valid/invalid,
+- не останавливает весь прогон из-за одной плохой строки.
+
+Подготовлены датасеты:
+- sample_test_cases.jsonl
+- llm_eval_dataset_v2_300.jsonl
+- llm_eval_dataset_v2_300.parquet
+- all_oracles_smoke.jsonl (smoke-набор по типам oracle)
+
+Пример терминала:
+
+$ .venv/bin/python scripts/run_batch.py --help
+Run a test batch for LLM reliability analytics.
+--provider {mock,ollama}
+--evaluation-mode {regression,exploratory,adversarial,trace_replay}
+--repeat-count REPEAT_COUNT
+...
+
+============================================================
+5 НЕДЕЛЯ. RUNNER + ORACLE ENGINE
+============================================================
+
+Задание:
+- Реализовать запуск тест-кейсов на LLM
+- Поддержать oracle-оценивание с объяснимостью
+- Сохранять latency и ошибки
+
+Результат:
+Реализованы клиенты:
+- MockLLMClient (fallback/отладка)
+- OllamaLLMClient (локальный реальный запуск)
+
+Реализован TestRunner:
+- повторные прогоны (repeats_per_case)
+- замер latency
+- устойчивое поведение при ошибках вызова
+
+Реализован oracle engine с детализированным результатом:
+- exact_match, regex_match, keyword_match, numeric_tolerance, json_schema
+- placeholder semantic_similarity
+- composite-правила
+- нормализация ответов
+- details для трассировки решения oracle
+
+Пример кода (контракт oracle):
+
+class OracleEvaluation(BaseModel):
+    is_correct: bool
+    score: float
+    error_type: str | None = None
+    explanation: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+Пример терминала (локальные модели):
+
+$ ollama list
+NAME            ID              SIZE      MODIFIED
+qwen2.5:0.5b    a8b0c5157701    397 MB    5 hours ago
+llama3.2:1b     baf6a787fdff    1.3 GB    5 hours ago
+
+============================================================
+6 НЕДЕЛЯ. АНАЛИТИКА, ОТЧЕТЫ И STREAMLIT
+============================================================
+
+Задание:
+- Реализовать агрегированные метрики надежности
+- Подготовить интерфейс для презентации
+- Добавить drill-down до конкретного кейса
+
+Результат:
+Реализована аналитика:
+- accuracy, passed/failed
+- average/p95 latency
+- category accuracy
+- oracle pass-rate
+- error distribution
+- consistency/repeatability
+- coverage-метрики
+- overall_reliability_score (явная формула в коде)
+
+Реализован Streamlit frontend с разделами:
+- Analytics Dashboard
+- Run New Evaluation
+- Model Comparison
+
+Добавлен Result Inspector:
+- prompt
+- expected answer
+- raw output
+- normalized output
+- oracle explanation + details
+
+ПЛЕЙСХОЛДЕРЫ ДЛЯ СКРИНШОТОВ:
+[СКРИНШОТ 1] Страница Analytics Dashboard / Overview
+Что вставить: KPI-карточки, run summary, reliability score.
+
+[СКРИНШОТ 2] Страница Category Analysis
+Что вставить: bar chart accuracy по категориям + таблицу категорий.
+
+[СКРИНШОТ 3] Страница Error Analysis
+Что вставить: распределение ошибок + problematic cases.
+
+[СКРИНШОТ 4] Страница Raw Results + Result Inspector
+Что вставить: выбранный кейс, raw answer, trace oracle evaluation.
+
+[СКРИНШОТ 5] Страница Run New Evaluation
+Что вставить: выбор provider/model, repeat_count, запуск нового батча.
+
+[СКРИНШОТ 6] Страница Model Comparison
+Что вставить: сравнение двух запусков и summary improved/worsened.
+
+============================================================
+7 НЕДЕЛЯ. ТЕСТИРОВАНИЕ И ЭКСПЕРИМЕНТЫ
+============================================================
+
+Задание:
+- Провести функциональную проверку модулей
+- Запустить реальные прогоны на локальных LLM
+- Оценить стабильность результатов
+
+Результат:
+Прогнан unit/integration набор:
+
+$ .venv/bin/pytest -q
+............................................                             [100%]
+44 passed, 1 warning in 2.65s
+
+Пример запуска батча (llama3.2:1b, limit 5):
+
+$ .venv/bin/python scripts/run_batch.py \
+    --provider ollama --model llama3.2:1b \
+    --dataset sample_test_cases.jsonl --limit 5 \
+    --run-name doc-example-llama --run-label doc-example-llama
+
+Run summary
+  run_id=72bb667d-504b-4624-a957-d68ff2ebc9f4 loaded_test_cases=5 executed_test_cases=5
+  accuracy=0.800 average_latency_ms=534.81 overall_reliability_score=0.807
+  errors={'wrong_answer': 1}
+
+Пример запуска батча (qwen2.5:0.5b, limit 5):
+
+$ .venv/bin/python scripts/run_batch.py \
+    --provider ollama --model qwen2.5:0.5b \
+    --dataset sample_test_cases.jsonl --limit 5 \
+    --run-name doc-example-qwen --run-label doc-example-qwen
+
+Run summary
+  run_id=46432cb5-5642-47b5-91b7-eaf96f18b213 loaded_test_cases=5 executed_test_cases=5
+  accuracy=1.000 average_latency_ms=372.02 overall_reliability_score=0.963
+
+Пример SQL-агрегирования последних запусков:
+
+run_id                                model_name    attempts passed accuracy avg_latency_ms
+4ad9f76a-1b13-487b-95cd-2dbb86eee173  qwen2.5:0.5b  20      17     0.85     180.95
+031b648b-1de9-4335-8ae9-240966d276aa  llama3.2:1b   20      14     0.70     273.40
+3db5e1cb-d04a-4e32-bb03-f47dc2f928f3  qwen2.5:0.5b  20      16     0.80     241.69
+8da20b1d-ff44-40c1-bc9d-8884768e9ece  llama3.2:1b   20      14     0.70     333.23
+
+Выявленный технический момент:
+- параллельный запуск двух CLI-процессов может дать lock-конфликт DuckDB (один файл БД), поэтому батчи запускать последовательно.
+
+============================================================
+ИТОГ И ПЛАН
+============================================================
+
+Итог:
+1. Построен полный pipeline от тест-кейса до итогового отчета.
+2. Реализованы реальные локальные прогоны через Ollama.
+3. Добавлена explainability-трассировка (Result Inspector + oracle details).
+4. Подготовлена база для гибридной оценки: regression / adversarial / trace replay.
+
+План на следующий период:
+1. Укрепить набор тест-кейсов (минимизация неоднозначных формулировок).
+2. Добавить более строгие метрики сравнения моделей по нескольким повторным прогонам (median/CI).
+3. Уточнить политику нормализации/soft-match для exact_match и отдельно показывать strict-accuracy.
+4. Подготовить финальный презентационный пакет: фронтенд-скриншоты + 1–2 кейса глубокого разбора ошибок.

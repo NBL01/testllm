@@ -10,6 +10,7 @@ from llm_reliability_analytics.storage.duckdb_store import (
     insert_test_cases,
     upsert_test_cases,
 )
+from llm_reliability_analytics.storage.trace_repository import capture_traces_for_run, fetch_traces
 
 __all__ = [
     "RunAggregatedSummary",
@@ -20,4 +21,6 @@ __all__ = [
     "insert_batch_results",
     "fetch_aggregated_summaries",
     "fetch_results_for_run",
+    "capture_traces_for_run",
+    "fetch_traces",
 ]

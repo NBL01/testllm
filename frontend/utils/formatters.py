@@ -50,8 +50,10 @@ def mode_badge(mode: str | None) -> str:
     normalized = (mode or "unknown").strip().lower()
     if normalized == "mock":
         return "MOCK"
-    if normalized == "real":
+    if normalized in {"real", "real_api"}:
         return "REAL API"
+    if normalized == "real_local":
+        return "REAL LOCAL (OLLAMA)"
     if normalized == "offline_replay":
         return "OFFLINE REPLAY"
     return normalized.upper()

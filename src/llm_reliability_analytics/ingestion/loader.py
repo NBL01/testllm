@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RAW_DATA_DIR = PROJECT_ROOT / "data" / "raw"
+ADVERSARIAL_DATA_DIR = PROJECT_ROOT / "data" / "adversarial"
 
 
 class IngestionSummary(BaseModel):
@@ -20,6 +21,7 @@ class IngestionSummary(BaseModel):
     valid_rows: int
     invalid_rows: int
     dataset_versions: list[str] = Field(default_factory=list)
+    test_source_distribution: dict[str, int] = Field(default_factory=dict)
     category_distribution: dict[str, int] = Field(default_factory=dict)
     oracle_type_distribution: dict[str, int] = Field(default_factory=dict)
 
@@ -42,6 +44,11 @@ def load_test_cases(file_path: str | Path) -> tuple[list[TestCase], IngestionSum
 def load_test_cases_from_raw(filename: str) -> tuple[list[TestCase], IngestionSummary]:
     """Load test cases from the default raw dataset directory."""
     return load_test_cases(RAW_DATA_DIR / filename)
+
+
+def load_test_cases_from_adversarial(filename: str) -> tuple[list[TestCase], IngestionSummary]:
+    """Load adversarial test cases from the dedicated adversarial dataset directory."""
+    return load_test_cases(ADVERSARIAL_DATA_DIR / filename)
 
 
 def _load_from_jsonl(path: Path) -> tuple[list[TestCase], IngestionSummary]:
@@ -155,6 +162,14 @@ def _resolve_input_path(file_path: str | Path) -> Path:
     if raw_path.exists():
         return raw_path
 
+    adversarial_path = ADVERSARIAL_DATA_DIR / path
+    if adversarial_path.exists():
+        return adversarial_path
+
+    project_data_path = PROJECT_ROOT / "data" / path
+    if project_data_path.exists():
+        return project_data_path
+
     raise FileNotFoundError(f"Input file not found: {file_path}")
 
 
@@ -165,6 +180,7 @@ def _build_ingestion_summary(
     invalid_rows: int,
 ) -> IngestionSummary:
     category_distribution = Counter(test_case.category for test_case in test_cases)
+    test_source_distribution = Counter(test_case.test_source.value for test_case in test_cases)
     oracle_type_distribution = Counter(test_case.oracle_type.value for test_case in test_cases)
     dataset_versions = sorted({test_case.dataset_version for test_case in test_cases})
 
@@ -173,6 +189,7 @@ def _build_ingestion_summary(
         valid_rows=valid_rows,
         invalid_rows=invalid_rows,
         dataset_versions=dataset_versions,
+        test_source_distribution=dict(test_source_distribution),
         category_distribution=dict(category_distribution),
         oracle_type_distribution=dict(oracle_type_distribution),
     )

@@ -11,7 +11,6 @@ Why DuckDB for this project:
 import logging
 import os
 from pathlib import Path
-from time import time
 
 import duckdb
 
@@ -23,6 +22,7 @@ logger = logging.getLogger(__name__)
 EXPECTED_TABLE_COLUMNS: dict[str, list[str]] = {
     "test_cases": [
         "test_case_id",
+        "test_source",
         "dataset_version",
         "category",
         "difficulty",
@@ -39,8 +39,10 @@ EXPECTED_TABLE_COLUMNS: dict[str, list[str]] = {
         "provider",
         "model_version",
         "dataset_version",
+        "evaluation_mode",
         "created_at",
         "temperature",
+        "max_output_tokens",
         "repeat_count",
         "mode",
         "notes",
@@ -57,6 +59,12 @@ EXPECTED_TABLE_COLUMNS: dict[str, list[str]] = {
         "attempt_index",
         "dataset_version",
         "category",
+        "test_source",
+        "prompt",
+        "expected_answer",
+        "oracle_type",
+        "raw_output",
+        "normalized_output",
         "actual_answer",
         "expected_answer_normalized",
         "actual_answer_normalized",
@@ -65,16 +73,115 @@ EXPECTED_TABLE_COLUMNS: dict[str, list[str]] = {
         "latency_ms",
         "latency_source",
         "error_type",
+        "explanation",
+        "oracle_details_json",
         "error_taxonomy",
         "critical_error_flag",
         "normalized_answer",
     ],
+    "evaluation_traces": [
+        "trace_id",
+        "run_id",
+        "test_case_id",
+        "attempt_index",
+        "prompt",
+        "raw_output",
+        "normalized_output",
+        "category",
+        "test_source",
+        "oracle_type",
+        "score",
+        "is_correct",
+        "error_type",
+        "explanation",
+        "created_at",
+    ],
+}
+
+MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
+    "test_cases": {
+        "test_case_id": "TEXT",
+        "test_source": "TEXT",
+        "dataset_version": "TEXT",
+        "category": "TEXT",
+        "difficulty": "TEXT",
+        "prompt": "TEXT",
+        "expected_answer": "TEXT",
+        "oracle_type": "TEXT",
+        "metadata": "JSON",
+    },
+    "test_runs": {
+        "id": "TEXT",
+        "name": "TEXT",
+        "run_label": "TEXT",
+        "model_name": "TEXT",
+        "provider": "TEXT",
+        "model_version": "TEXT",
+        "dataset_version": "TEXT",
+        "evaluation_mode": "TEXT",
+        "created_at": "TIMESTAMP",
+        "temperature": "DOUBLE",
+        "max_output_tokens": "INTEGER",
+        "repeat_count": "INTEGER",
+        "mode": "TEXT",
+        "notes": "TEXT",
+        "run_group_id": "TEXT",
+        "repetition_index": "INTEGER",
+        "status": "TEXT",
+        "started_at": "TIMESTAMP",
+        "finished_at": "TIMESTAMP",
+        "metadata": "JSON",
+    },
+    "test_results": {
+        "run_id": "TEXT",
+        "test_case_id": "TEXT",
+        "attempt_index": "INTEGER",
+        "dataset_version": "TEXT",
+        "category": "TEXT",
+        "test_source": "TEXT",
+        "prompt": "TEXT",
+        "expected_answer": "TEXT",
+        "oracle_type": "TEXT",
+        "raw_output": "TEXT",
+        "normalized_output": "TEXT",
+        "actual_answer": "TEXT",
+        "expected_answer_normalized": "TEXT",
+        "actual_answer_normalized": "TEXT",
+        "is_correct": "BOOLEAN",
+        "score": "DOUBLE",
+        "latency_ms": "DOUBLE",
+        "latency_source": "TEXT",
+        "error_type": "TEXT",
+        "explanation": "TEXT",
+        "oracle_details_json": "TEXT",
+        "error_taxonomy": "TEXT",
+        "critical_error_flag": "BOOLEAN",
+        "normalized_answer": "TEXT",
+    },
+    "evaluation_traces": {
+        "trace_id": "TEXT",
+        "run_id": "TEXT",
+        "test_case_id": "TEXT",
+        "attempt_index": "INTEGER",
+        "prompt": "TEXT",
+        "raw_output": "TEXT",
+        "normalized_output": "TEXT",
+        "category": "TEXT",
+        "test_source": "TEXT",
+        "oracle_type": "TEXT",
+        "score": "DOUBLE",
+        "is_correct": "BOOLEAN",
+        "error_type": "TEXT",
+        "explanation": "TEXT",
+        "created_at": "TIMESTAMP",
+    },
 }
 
 CREATE_TABLE_SQL: dict[str, str] = {
     "test_cases": """
         CREATE TABLE IF NOT EXISTS test_cases (
             test_case_id TEXT PRIMARY KEY,
+            test_source TEXT NOT NULL,
             dataset_version TEXT NOT NULL,
             category TEXT NOT NULL,
             difficulty TEXT NOT NULL,
@@ -93,8 +200,10 @@ CREATE_TABLE_SQL: dict[str, str] = {
             provider TEXT NOT NULL,
             model_version TEXT NOT NULL,
             dataset_version TEXT NOT NULL,
+            evaluation_mode TEXT NOT NULL,
             created_at TIMESTAMP,
             temperature DOUBLE,
+            max_output_tokens INTEGER NOT NULL,
             repeat_count INTEGER NOT NULL,
             mode TEXT NOT NULL,
             notes TEXT,
@@ -113,6 +222,12 @@ CREATE_TABLE_SQL: dict[str, str] = {
             attempt_index INTEGER NOT NULL,
             dataset_version TEXT,
             category TEXT,
+            test_source TEXT,
+            prompt TEXT,
+            expected_answer TEXT,
+            oracle_type TEXT,
+            raw_output TEXT,
+            normalized_output TEXT,
             actual_answer TEXT,
             expected_answer_normalized TEXT,
             actual_answer_normalized TEXT,
@@ -121,10 +236,31 @@ CREATE_TABLE_SQL: dict[str, str] = {
             latency_ms DOUBLE NOT NULL,
             latency_source TEXT,
             error_type TEXT,
+            explanation TEXT,
+            oracle_details_json TEXT,
             error_taxonomy TEXT,
             critical_error_flag BOOLEAN,
             normalized_answer TEXT,
             PRIMARY KEY (run_id, test_case_id, attempt_index)
+        );
+    """,
+    "evaluation_traces": """
+        CREATE TABLE IF NOT EXISTS evaluation_traces (
+            trace_id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            test_case_id TEXT,
+            attempt_index INTEGER,
+            prompt TEXT,
+            raw_output TEXT,
+            normalized_output TEXT,
+            category TEXT,
+            test_source TEXT,
+            oracle_type TEXT,
+            score DOUBLE,
+            is_correct BOOLEAN,
+            error_type TEXT,
+            explanation TEXT,
+            created_at TIMESTAMP
         );
     """,
 }
@@ -146,7 +282,7 @@ def get_connection() -> duckdb.DuckDBPyConnection:
 
 def initialize_database() -> None:
     conn = get_connection()
-    for table_name in ("test_cases", "test_runs", "test_results"):
+    for table_name in ("test_cases", "test_runs", "test_results", "evaluation_traces"):
         _ensure_table_schema(conn, table_name)
     conn.close()
 
@@ -158,24 +294,25 @@ def initialize_schema() -> None:
 
 def _ensure_table_schema(conn: duckdb.DuckDBPyConnection, table_name: str) -> None:
     expected_columns = EXPECTED_TABLE_COLUMNS[table_name]
+    expected_types = MIGRATION_COLUMN_SQL_TYPES[table_name]
 
     if not _table_exists(conn, table_name):
         conn.execute(CREATE_TABLE_SQL[table_name])
         return
 
-    current_columns = _table_columns(conn, table_name)
-    if current_columns == expected_columns:
+    current_columns = set(_table_columns(conn, table_name))
+    missing_columns = [column for column in expected_columns if column not in current_columns]
+    if not missing_columns:
         return
 
-    # For demo safety, keep old data by renaming the table, then recreate schema.
-    backup_name = f"{table_name}__backup_{int(time())}"
     logger.warning(
-        "Schema mismatch for table '%s'. Backing up to '%s' and recreating table.",
+        "Schema mismatch for table '%s'. Missing columns=%s. Applying additive migration.",
         table_name,
-        backup_name,
+        missing_columns,
     )
-    conn.execute(f"ALTER TABLE {table_name} RENAME TO {backup_name};")
-    conn.execute(CREATE_TABLE_SQL[table_name])
+    for column_name in missing_columns:
+        column_type = expected_types[column_name]
+        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type};")
 
 
 def _table_exists(conn: duckdb.DuckDBPyConnection, table_name: str) -> bool:

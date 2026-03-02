@@ -8,6 +8,7 @@ from llm_reliability_analytics.workflow.service import (
     load_cases_to_storage,
     run_batch_workflow,
     run_report_workflow,
+    run_trace_replay_workflow,
 )
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "RunReportResult",
     "load_cases_to_storage",
     "run_batch_workflow",
+    "run_trace_replay_workflow",
     "run_report_workflow",
 ]

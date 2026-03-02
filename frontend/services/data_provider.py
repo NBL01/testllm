@@ -1,9 +1,6 @@
 """Data access layer for the Streamlit dashboard.
 
-Load priority for presentation robustness:
-1) DuckDB (primary project storage)
-2) CSV/Parquet exports (portable fallback)
-3) In-memory mock data (always available for demo)
+The dashboard now reads from DuckDB only to avoid ambiguous fallback behavior.
 """
 
 from __future__ import annotations
@@ -24,8 +21,10 @@ REQUIRED_RUN_COLUMNS = [
     "provider",
     "model_version",
     "dataset_version",
+    "evaluation_mode",
     "created_at",
     "temperature",
+    "max_output_tokens",
     "repeat_count",
     "mode",
     "notes",
@@ -40,7 +39,11 @@ REQUIRED_RESULT_COLUMNS = [
     "test_case_id",
     "attempt_index",
     "category",
+    "test_source",
+    "prompt",
     "oracle_type",
+    "raw_output",
+    "normalized_output",
     "actual_answer",
     "expected_answer",
     "is_correct",
@@ -48,9 +51,14 @@ REQUIRED_RESULT_COLUMNS = [
     "latency_ms",
     "latency_source",
     "error_type",
+    "explanation",
+    "oracle_details_json",
     "error_taxonomy",
     "critical_error_flag",
     "normalized_answer",
+    "provider",
+    "model_name",
+    "evaluation_mode",
     "timestamp",
 ]
 
@@ -71,24 +79,21 @@ class DataProvider:
         self.db_path = Path(os.getenv("LLM_RELIABILITY_DB_PATH", str(default_db_path)))
 
     def load(self) -> LoadedData:
-        duckdb_data = self._load_from_duckdb()
-        if duckdb_data is not None and not duckdb_data.results.empty:
-            return duckdb_data
-
-        file_data = self._load_from_files()
-        if file_data is not None and not file_data.results.empty:
-            return file_data
-
-        return self._load_mock_data()
+        loaded = self._load_from_duckdb()
+        if loaded is not None:
+            return loaded
+        return self._empty_loaded_data(note="DuckDB data is unavailable.")
 
     def _load_from_duckdb(self) -> LoadedData | None:
         if not self.db_path.exists():
-            return None
+            return self._empty_loaded_data(
+                note=f"DuckDB file not found at {self.db_path}. Run at least one evaluation batch first.",
+            )
 
         try:
             conn = duckdb.connect(str(self.db_path))
-        except duckdb.Error:
-            return None
+        except duckdb.Error as exc:
+            return self._empty_loaded_data(note=f"Failed to connect DuckDB: {exc}")
 
         try:
             tables = {
@@ -103,106 +108,23 @@ class DataProvider:
             }
 
             if "test_results" not in tables:
-                return None
+                return self._empty_loaded_data(
+                    note="DuckDB is reachable, but table 'test_results' is missing.",
+                )
 
-            runs_df = (
-                conn.execute(
-                    """
-                    SELECT
-                        id AS run_id,
-                        name,
-                        run_label,
-                        model_name,
-                        provider,
-                        model_version,
-                        dataset_version,
-                        created_at,
-                        temperature,
-                        repeat_count,
-                        mode,
-                        notes,
-                        run_group_id,
-                        repetition_index,
-                        status,
-                        started_at,
-                        finished_at
-                    FROM test_runs
-                    ORDER BY COALESCE(created_at, started_at, finished_at) DESC, run_id DESC;
-                    """
-                ).fetchdf()
-                if "test_runs" in tables
-                else pd.DataFrame(columns=["run_id"])
-            )
+            runs_df = self._load_runs_from_duckdb(conn=conn, tables=tables)
 
-            cases_df = (
-                conn.execute(
-                    """
-                    SELECT
-                        test_case_id,
-                        dataset_version,
-                        category,
-                        difficulty,
-                        prompt,
-                        expected_answer,
-                        oracle_type
-                    FROM test_cases;
-                    """
-                ).fetchdf()
-                if "test_cases" in tables
-                else pd.DataFrame(columns=["test_case_id"])
-            )
+            cases_df = self._load_cases_from_duckdb(conn=conn, tables=tables)
 
-            results_df = conn.execute(
-                """
-                SELECT
-                    CONCAT(r.run_id, ':', r.test_case_id, ':', r.attempt_index) AS result_id,
-                    r.run_id,
-                    r.test_case_id,
-                    r.attempt_index,
-                    COALESCE(r.category, tc.category, 'unknown') AS category,
-                    COALESCE(tc.oracle_type, 'unknown') AS oracle_type,
-                    r.actual_answer,
-                    tc.expected_answer,
-                    r.is_correct,
-                    r.score,
-                    r.latency_ms,
-                    r.latency_source,
-                    r.error_type,
-                    r.error_taxonomy,
-                    r.critical_error_flag,
-                    COALESCE(r.normalized_answer, r.actual_answer_normalized, r.actual_answer) AS normalized_answer,
-                    COALESCE(tr.finished_at, tr.created_at, tr.started_at) AS timestamp
-                FROM test_results r
-                LEFT JOIN test_cases tc
-                    ON tc.test_case_id = r.test_case_id
-                LEFT JOIN test_runs tr
-                    ON tr.id = r.run_id
-                ORDER BY r.run_id, r.test_case_id, r.attempt_index;
-                """
-            ).fetchdf()
+            results_df = self._load_results_from_duckdb(conn=conn, tables=tables)
+        except Exception as exc:
+            return self._empty_loaded_data(note=f"Failed to load dashboard data from DuckDB: {exc}")
         finally:
             conn.close()
 
         prepared = self._prepare_loaded_data(runs_df=runs_df, cases_df=cases_df, results_df=results_df)
         prepared.source = "duckdb"
-        prepared.note = f"Loaded from DuckDB"
-        return prepared
-
-    def _load_from_files(self) -> LoadedData | None:
-        runs_df = self._load_table_file("test_runs")
-        cases_df = self._load_table_file("test_cases")
-        results_df = self._load_table_file("test_results")
-
-        if results_df is None or results_df.empty:
-            return None
-
-        prepared = self._prepare_loaded_data(
-            runs_df=runs_df if runs_df is not None else pd.DataFrame(),
-            cases_df=cases_df if cases_df is not None else pd.DataFrame(),
-            results_df=results_df,
-        )
-        prepared.source = "file"
-        prepared.note = "Loaded from CSV/Parquet exports"
+        prepared.note = "Loaded from DuckDB"
         return prepared
 
     def _prepare_loaded_data(
@@ -221,20 +143,22 @@ class DataProvider:
         if not cases.empty and "test_case_id" in cases.columns:
             enrich_columns = [
                 col
-                for col in ["test_case_id", "category", "oracle_type", "expected_answer"]
+                for col in ["test_case_id", "category", "test_source", "oracle_type", "expected_answer", "prompt"]
                 if col in cases.columns
             ]
             if len(enrich_columns) > 1:
                 case_lookup = cases[enrich_columns].drop_duplicates("test_case_id")
                 results = results.merge(case_lookup, on="test_case_id", how="left", suffixes=("", "_case"))
-                for col in ["category", "oracle_type", "expected_answer"]:
+                for col in ["category", "test_source", "oracle_type", "expected_answer", "prompt"]:
                     case_col = f"{col}_case"
                     if case_col in results.columns:
                         results[col] = results[col].fillna(results[case_col])
                         results = results.drop(columns=[case_col])
 
         if not runs.empty:
-            run_enrich = runs[["run_id", "mode", "created_at"]].drop_duplicates("run_id")
+            run_enrich = runs[
+                ["run_id", "mode", "created_at", "provider", "model_name", "evaluation_mode"]
+            ].drop_duplicates("run_id")
             results = results.merge(run_enrich, on="run_id", how="left", suffixes=("", "_run"))
 
             results["timestamp"] = results["timestamp"].fillna(results["created_at"])
@@ -271,7 +195,12 @@ class DataProvider:
         runs["provider"] = self._series_or_default(runs, "provider", "local").fillna("local")
         runs["model_version"] = self._series_or_default(runs, "model_version", "n/a").fillna("n/a")
         runs["dataset_version"] = self._series_or_default(runs, "dataset_version", "v1").fillna("v1")
+        runs["evaluation_mode"] = self._series_or_default(runs, "evaluation_mode", "regression").fillna("regression")
         runs["temperature"] = pd.to_numeric(self._series_or_default(runs, "temperature", 0.0), errors="coerce").fillna(0.0)
+        runs["max_output_tokens"] = pd.to_numeric(
+            self._series_or_default(runs, "max_output_tokens", 128),
+            errors="coerce",
+        ).fillna(128).astype(int)
         if "repeat_count" in runs.columns:
             runs["repeat_count"] = pd.to_numeric(runs["repeat_count"], errors="coerce").fillna(1).astype(int)
         else:
@@ -342,126 +271,57 @@ class DataProvider:
                 + results["attempt_index"].astype(str)
             )
 
-        results["is_correct"] = results["is_correct"].fillna(False).astype(bool)
+        results["is_correct"] = self._normalize_boolean_series(results["is_correct"], default=False)
         results["score"] = pd.to_numeric(results["score"], errors="coerce").fillna(0.0)
         results["latency_ms"] = pd.to_numeric(results["latency_ms"], errors="coerce").fillna(0.0)
-        results["run_id"] = results["run_id"].astype(str)
-        results["test_case_id"] = results["test_case_id"].astype(str)
-        results["category"] = results["category"].fillna("unknown").astype(str)
-        results["oracle_type"] = results["oracle_type"].fillna("unknown").astype(str)
-        results["actual_answer"] = results["actual_answer"].fillna("")
-        results["expected_answer"] = results["expected_answer"].fillna("")
-        results["error_type"] = results["error_type"].fillna("")
-        results["error_taxonomy"] = results["error_taxonomy"].fillna("none")
-        results["normalized_answer"] = results["normalized_answer"].fillna(results["actual_answer"]).astype(str)
+        results["run_id"] = self._as_text_series(results["run_id"])
+        results["test_case_id"] = self._as_text_series(results["test_case_id"])
+        results["category"] = self._as_text_series(results["category"], default="unknown")
+        results["test_source"] = self._as_text_series(results["test_source"], default="regression")
+        results["prompt"] = self._as_text_series(results["prompt"])
+        results["oracle_type"] = self._as_text_series(results["oracle_type"], default="unknown")
+        if "raw_output" in results.columns:
+            results["raw_output"] = results["raw_output"].fillna(results["actual_answer"])
+        else:
+            results["raw_output"] = results["actual_answer"]
+        if "normalized_output" in results.columns:
+            results["normalized_output"] = results["normalized_output"].fillna(results["normalized_answer"])
+        else:
+            results["normalized_output"] = results["normalized_answer"]
 
-        results["critical_error_flag"] = results["critical_error_flag"].fillna(False)
-        if results["critical_error_flag"].dtype != bool:
+        results["raw_output"] = self._as_text_series(results["raw_output"])
+        results["normalized_output"] = self._as_text_series(results["normalized_output"])
+        results["actual_answer"] = self._as_text_series(results["actual_answer"])
+        results["expected_answer"] = self._as_text_series(results["expected_answer"])
+        results["error_type"] = self._as_text_series(results["error_type"])
+        results["explanation"] = self._as_text_series(results["explanation"])
+        results["oracle_details_json"] = self._as_text_series(results["oracle_details_json"])
+        results["error_taxonomy"] = self._as_text_series(results["error_taxonomy"], default="none")
+        results["normalized_answer"] = self._as_text_series(results["normalized_answer"])
+        missing_normalized = results["normalized_answer"].str.len() == 0
+        results.loc[missing_normalized, "normalized_answer"] = results.loc[missing_normalized, "actual_answer"]
+        results["provider"] = self._as_text_series(results["provider"], default="unknown")
+        results["model_name"] = self._as_text_series(results["model_name"], default="unknown-model")
+        results["evaluation_mode"] = self._as_text_series(results["evaluation_mode"], default="regression")
+
+        results["critical_error_flag"] = self._normalize_boolean_series(
+            results["critical_error_flag"],
+            default=False,
+        )
+        if str(results["critical_error_flag"].dtype) != "bool":
             tax = results["error_taxonomy"].astype(str).str.lower()
             results["critical_error_flag"] = tax.isin({"runtime", "oracle", "timeout", "unknown"})
 
         return results
 
-    def _load_table_file(self, table_name: str) -> pd.DataFrame | None:
-        for path in self._table_file_candidates(table_name):
-            if not path.exists():
-                continue
-
-            if path.suffix.lower() == ".csv":
-                return pd.read_csv(path)
-
-            if path.suffix.lower() == ".parquet":
-                conn = duckdb.connect()
-                try:
-                    return conn.execute(
-                        "SELECT * FROM read_parquet(?)",
-                        [str(path)],
-                    ).fetchdf()
-                finally:
-                    conn.close()
-
-        return None
-
-    def _table_file_candidates(self, table_name: str) -> list[Path]:
-        directories = [
-            self.project_root / "data",
-            self.project_root / "data" / "raw",
-            self.project_root / "data" / "export",
-            self.project_root / "data" / "pbi_export",
-        ]
-
-        candidates: list[Path] = []
-        for directory in directories:
-            candidates.append(directory / f"{table_name}.parquet")
-            candidates.append(directory / f"{table_name}.csv")
-
-        return candidates
-
-    def _load_mock_data(self) -> LoadedData:
-        runs = pd.DataFrame(
-            [
-                {
-                    "run_id": "mock-run-1",
-                    "name": "mock-baseline",
-                    "run_label": "mock-llm | v_mock | 2026-03-01 09:00",
-                    "model_name": "mock-llm",
-                    "provider": "local",
-                    "model_version": "v1",
-                    "dataset_version": "v_mock",
-                    "created_at": "2026-03-01T09:00:00Z",
-                    "temperature": 0.0,
-                    "repeat_count": 2,
-                    "mode": "mock",
-                    "notes": "Baseline mock run",
-                    "run_group_id": "mock-group",
-                    "repetition_index": 1,
-                    "status": "completed",
-                },
-                {
-                    "run_id": "mock-run-2",
-                    "name": "mock-improved",
-                    "run_label": "mock-llm-v2 | v_mock | 2026-03-01 10:00",
-                    "model_name": "mock-llm-v2",
-                    "provider": "local",
-                    "model_version": "v2",
-                    "dataset_version": "v_mock",
-                    "created_at": "2026-03-01T10:00:00Z",
-                    "temperature": 0.0,
-                    "repeat_count": 2,
-                    "mode": "mock",
-                    "notes": "Improved prompt setup",
-                    "run_group_id": "mock-group",
-                    "repetition_index": 2,
-                    "status": "completed",
-                },
-            ]
+    def _empty_loaded_data(self, note: str) -> LoadedData:
+        return LoadedData(
+            runs=pd.DataFrame(columns=REQUIRED_RUN_COLUMNS),
+            cases=pd.DataFrame(columns=["test_case_id"]),
+            results=pd.DataFrame(columns=REQUIRED_RESULT_COLUMNS),
+            source="duckdb",
+            note=note,
         )
-
-        cases = pd.DataFrame(
-            [
-                {"test_case_id": "tc-1", "category": "factual_qa", "oracle_type": "exact_match", "expected_answer": "Paris"},
-                {"test_case_id": "tc-2", "category": "classification", "oracle_type": "keyword_match", "expected_answer": "positive"},
-                {"test_case_id": "tc-3", "category": "numeric_reasoning", "oracle_type": "numeric_tolerance", "expected_answer": "42"},
-                {"test_case_id": "tc-4", "category": "format_constrained_json", "oracle_type": "json_schema", "expected_answer": "{\"type\":\"object\"}"},
-            ]
-        )
-
-        results = pd.DataFrame(
-            [
-                {"result_id": "mock-run-1:tc-1:1", "run_id": "mock-run-1", "test_case_id": "tc-1", "attempt_index": 1, "category": "factual_qa", "oracle_type": "exact_match", "actual_answer": "Paris", "expected_answer": "Paris", "is_correct": True, "score": 1.0, "latency_ms": 2.2, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "paris", "timestamp": "2026-03-01T09:00:00Z"},
-                {"result_id": "mock-run-1:tc-1:2", "run_id": "mock-run-1", "test_case_id": "tc-1", "attempt_index": 2, "category": "factual_qa", "oracle_type": "exact_match", "actual_answer": "Paris", "expected_answer": "Paris", "is_correct": True, "score": 1.0, "latency_ms": 2.5, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "paris", "timestamp": "2026-03-01T09:00:00Z"},
-                {"result_id": "mock-run-1:tc-2:1", "run_id": "mock-run-1", "test_case_id": "tc-2", "attempt_index": 1, "category": "classification", "oracle_type": "keyword_match", "actual_answer": "neutral", "expected_answer": "positive", "is_correct": False, "score": 0.0, "latency_ms": 2.9, "latency_source": "mock_simulated", "error_type": "wrong_answer", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "neutral", "timestamp": "2026-03-01T09:00:00Z"},
-                {"result_id": "mock-run-2:tc-1:1", "run_id": "mock-run-2", "test_case_id": "tc-1", "attempt_index": 1, "category": "factual_qa", "oracle_type": "exact_match", "actual_answer": "Paris", "expected_answer": "Paris", "is_correct": True, "score": 1.0, "latency_ms": 1.8, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "paris", "timestamp": "2026-03-01T10:00:00Z"},
-                {"result_id": "mock-run-2:tc-2:1", "run_id": "mock-run-2", "test_case_id": "tc-2", "attempt_index": 1, "category": "classification", "oracle_type": "keyword_match", "actual_answer": "positive", "expected_answer": "positive", "is_correct": True, "score": 1.0, "latency_ms": 2.1, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "positive", "timestamp": "2026-03-01T10:00:00Z"},
-                {"result_id": "mock-run-2:tc-3:1", "run_id": "mock-run-2", "test_case_id": "tc-3", "attempt_index": 1, "category": "numeric_reasoning", "oracle_type": "numeric_tolerance", "actual_answer": "41.9", "expected_answer": "42", "is_correct": True, "score": 0.95, "latency_ms": 2.3, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "41.9", "timestamp": "2026-03-01T10:00:00Z"},
-                {"result_id": "mock-run-2:tc-4:1", "run_id": "mock-run-2", "test_case_id": "tc-4", "attempt_index": 1, "category": "format_constrained_json", "oracle_type": "json_schema", "actual_answer": "{\"value\":1}", "expected_answer": "{\"type\":\"object\"}", "is_correct": True, "score": 1.0, "latency_ms": 2.0, "latency_source": "mock_simulated", "error_type": "", "error_taxonomy": "none", "critical_error_flag": False, "normalized_answer": "{\"value\":1}", "timestamp": "2026-03-01T10:00:00Z"},
-            ]
-        )
-
-        prepared = self._prepare_loaded_data(runs_df=runs, cases_df=cases, results_df=results)
-        prepared.source = "mock"
-        prepared.note = "No stored data found. Showing built-in mock data for dashboard demo."
-        return prepared
 
     def _build_run_label(self, model_name: str, dataset_version: str, created_at: pd.Timestamp | None) -> str:
         if created_at is None or pd.isna(created_at):
@@ -474,3 +334,195 @@ class DataProvider:
         if column in frame.columns:
             return frame[column]
         return pd.Series([default_value] * len(frame), index=frame.index)
+
+    def _as_text_series(self, series: pd.Series, default: str = "") -> pd.Series:
+        values = series.astype("object")
+        values = values.where(~values.isna(), default)
+        return values.map(lambda value: default if value is None else str(value))
+
+    def _normalize_boolean_series(self, series: pd.Series, default: bool = False) -> pd.Series:
+        def parse_bool(value: object) -> bool:
+            if value is None:
+                return default
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            text = str(value).strip().lower()
+            if text in {"true", "1", "yes", "y", "t"}:
+                return True
+            if text in {"false", "0", "no", "n", "f", ""}:
+                return False
+            return default
+
+        return series.map(parse_bool).astype(bool)
+
+    def _load_runs_from_duckdb(self, conn: duckdb.DuckDBPyConnection, tables: set[str]) -> pd.DataFrame:
+        if "test_runs" not in tables:
+            return pd.DataFrame(columns=["run_id"])
+
+        run_columns = self._table_columns(conn, "test_runs")
+
+        def run_expr(column: str, alias: str, fallback_sql: str) -> str:
+            if column in run_columns:
+                return f"{column} AS {alias}"
+            return f"{fallback_sql} AS {alias}"
+
+        select_columns = [
+            run_expr("id", "run_id", "''"),
+            run_expr("name", "name", "''"),
+            run_expr("run_label", "run_label", "''"),
+            run_expr("model_name", "model_name", "'unknown-model'"),
+            run_expr("provider", "provider", "'local'"),
+            run_expr("model_version", "model_version", "'n/a'"),
+            run_expr("dataset_version", "dataset_version", "'v1'"),
+            run_expr("evaluation_mode", "evaluation_mode", "'regression'"),
+            run_expr("created_at", "created_at", "NULL"),
+            run_expr("temperature", "temperature", "0.0"),
+            run_expr("max_output_tokens", "max_output_tokens", "128"),
+            run_expr("repeat_count", "repeat_count", "1"),
+            run_expr("mode", "mode", "'mock'"),
+            run_expr("notes", "notes", "''"),
+            run_expr("run_group_id", "run_group_id", "''"),
+            run_expr("repetition_index", "repetition_index", "1"),
+            run_expr("status", "status", "'completed'"),
+            run_expr("started_at", "started_at", "NULL"),
+            run_expr("finished_at", "finished_at", "NULL"),
+        ]
+
+        query = f"""
+            SELECT
+                {", ".join(select_columns)}
+            FROM test_runs
+            ORDER BY COALESCE(created_at, started_at, finished_at) DESC, run_id DESC;
+        """
+        return conn.execute(query).fetchdf()
+
+    def _load_cases_from_duckdb(self, conn: duckdb.DuckDBPyConnection, tables: set[str]) -> pd.DataFrame:
+        if "test_cases" not in tables:
+            return pd.DataFrame(columns=["test_case_id"])
+
+        case_columns = self._table_columns(conn, "test_cases")
+
+        def case_expr(column: str, alias: str, fallback_sql: str) -> str:
+            if column in case_columns:
+                return f"{column} AS {alias}"
+            return f"{fallback_sql} AS {alias}"
+
+        select_columns = [
+            case_expr("test_case_id", "test_case_id", "''"),
+            case_expr("test_source", "test_source", "'regression'"),
+            case_expr("dataset_version", "dataset_version", "'v1'"),
+            case_expr("category", "category", "'unknown'"),
+            case_expr("difficulty", "difficulty", "'medium'"),
+            case_expr("prompt", "prompt", "''"),
+            case_expr("expected_answer", "expected_answer", "''"),
+            case_expr("oracle_type", "oracle_type", "'exact_match'"),
+        ]
+        return conn.execute(f"SELECT {', '.join(select_columns)} FROM test_cases;").fetchdf()
+
+    def _load_results_from_duckdb(self, conn: duckdb.DuckDBPyConnection, tables: set[str]) -> pd.DataFrame:
+        join_cases = "test_cases" in tables
+        join_runs = "test_runs" in tables
+        result_columns = self._table_columns(conn, "test_results")
+        case_columns = self._table_columns(conn, "test_cases") if join_cases else set()
+
+        def result_expr(column: str, fallback_sql: str) -> str:
+            if column in result_columns:
+                return f"r.{column}"
+            return fallback_sql
+
+        def case_expr(column: str, fallback_sql: str) -> str:
+            if column in case_columns:
+                return f"tc.{column}"
+            return fallback_sql
+
+        category_expr = (
+            f"COALESCE({result_expr('category', 'NULL')}, {case_expr('category', 'NULL')}, 'unknown')"
+            if join_cases
+            else f"COALESCE({result_expr('category', 'NULL')}, 'unknown')"
+        )
+        test_source_expr = (
+            f"COALESCE({result_expr('test_source', 'NULL')}, {case_expr('test_source', 'NULL')}, 'regression')"
+            if join_cases
+            else f"COALESCE({result_expr('test_source', 'NULL')}, 'regression')"
+        )
+        oracle_expr = (
+            f"COALESCE({result_expr('oracle_type', 'NULL')}, {case_expr('oracle_type', 'NULL')}, 'unknown')"
+            if join_cases
+            else f"COALESCE({result_expr('oracle_type', 'NULL')}, 'unknown')"
+        )
+        expected_answer_expr = (
+            f"COALESCE({result_expr('expected_answer', 'NULL')}, {case_expr('expected_answer', 'NULL')})"
+            if join_cases
+            else result_expr("expected_answer", "NULL")
+        )
+        prompt_expr = (
+            f"COALESCE({result_expr('prompt', 'NULL')}, {case_expr('prompt', 'NULL')}, '')"
+            if join_cases
+            else f"COALESCE({result_expr('prompt', 'NULL')}, '')"
+        )
+        empty_text_sql = "''"
+        raw_output_expr = f"COALESCE({result_expr('raw_output', 'NULL')}, {result_expr('actual_answer', empty_text_sql)}, '')"
+        normalized_output_expr = (
+            f"COALESCE({result_expr('normalized_output', 'NULL')}, "
+            f"{result_expr('normalized_answer', 'NULL')}, "
+            f"{result_expr('actual_answer_normalized', 'NULL')}, "
+            f"{result_expr('actual_answer', empty_text_sql)})"
+        )
+        actual_answer_expr = f"COALESCE({result_expr('actual_answer', 'NULL')}, {result_expr('raw_output', empty_text_sql)}, '')"
+        timestamp_expr = (
+            "COALESCE(tr.finished_at, tr.created_at, tr.started_at)"
+            if join_runs
+            else "CURRENT_TIMESTAMP"
+        )
+
+        query = f"""
+            SELECT
+                CONCAT(r.run_id, ':', r.test_case_id, ':', r.attempt_index) AS result_id,
+                r.run_id,
+                r.test_case_id,
+                r.attempt_index,
+                {category_expr} AS category,
+                {test_source_expr} AS test_source,
+                {prompt_expr} AS prompt,
+                {oracle_expr} AS oracle_type,
+                {raw_output_expr} AS raw_output,
+                {normalized_output_expr} AS normalized_output,
+                {actual_answer_expr} AS actual_answer,
+                {expected_answer_expr} AS expected_answer,
+                r.is_correct,
+                r.score,
+                r.latency_ms,
+                {result_expr("latency_source", "NULL")} AS latency_source,
+                {result_expr("error_type", "NULL")} AS error_type,
+                {result_expr("explanation", "NULL")} AS explanation,
+                {result_expr("oracle_details_json", "NULL")} AS oracle_details_json,
+                {result_expr("error_taxonomy", "NULL")} AS error_taxonomy,
+                {result_expr("critical_error_flag", "NULL")} AS critical_error_flag,
+                COALESCE(
+                    {result_expr("normalized_answer", "NULL")},
+                    {result_expr("normalized_output", "NULL")},
+                    {result_expr("actual_answer_normalized", "NULL")},
+                    {result_expr("actual_answer", "NULL")},
+                    {result_expr("raw_output", "NULL")}
+                ) AS normalized_answer,
+                {timestamp_expr} AS timestamp
+            FROM test_results r
+            {"LEFT JOIN test_cases tc ON tc.test_case_id = r.test_case_id" if join_cases else ""}
+            {"LEFT JOIN test_runs tr ON tr.id = r.run_id" if join_runs else ""}
+            ORDER BY r.run_id, r.test_case_id, r.attempt_index;
+        """
+        return conn.execute(query).fetchdf()
+
+    def _table_columns(self, conn: duckdb.DuckDBPyConnection, table_name: str) -> set[str]:
+        rows = conn.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'main'
+              AND table_name = ?;
+            """,
+            [table_name],
+        ).fetchall()
+        return {str(row[0]) for row in rows}

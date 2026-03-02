@@ -5,7 +5,7 @@ from typing import Any
 
 from jsonschema import ValidationError as JsonSchemaValidationError
 from jsonschema import validate
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from llm_reliability_analytics.oracles.normalization import normalize_answer
 
@@ -13,7 +13,9 @@ from llm_reliability_analytics.oracles.normalization import normalize_answer
 class OracleEvaluation(BaseModel):
     is_correct: bool
     score: float
+    error_type: str | None = None
     explanation: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class BaseOracle(ABC):
@@ -24,7 +26,7 @@ class BaseOracle(ABC):
         actual_answer: str | None,
         metadata: dict[str, Any] | None = None,
     ) -> OracleEvaluation:
-        """Evaluate actual answer against the expected answer."""
+        """Evaluate actual answer against expected answer and return trace details."""
 
 
 class ExactMatchOracle(BaseOracle):
@@ -38,34 +40,106 @@ class ExactMatchOracle(BaseOracle):
         actual_normalized = normalize_answer(actual_answer)
         valid_answers = _extract_valid_answers(expected_answer, metadata)
         normalized_candidates = [normalize_answer(answer) for answer in valid_answers if normalize_answer(answer)]
+        strict_exact = bool(metadata.get("strict_exact", False))
+        allow_substring_match = bool(metadata.get("allow_substring_match", not strict_exact))
+        number_tolerance = float(metadata.get("number_tolerance", 0.0))
+
         if not normalized_candidates:
             return OracleEvaluation(
                 is_correct=False,
                 score=0.0,
-                explanation="No valid expected answers were provided",
+                error_type="invalid_oracle_config",
+                explanation="No valid expected answers were provided.",
+                details={
+                    "expected_normalized": [],
+                    "actual_normalized": actual_normalized,
+                    "comparison_result": "no_expected_candidates",
+                    "strict_exact": strict_exact,
+                },
             )
 
-        if actual_normalized in normalized_candidates:
+        matched_candidate = next((candidate for candidate in normalized_candidates if actual_normalized == candidate), None)
+        if matched_candidate is not None:
             return OracleEvaluation(
                 is_correct=True,
                 score=1.0,
-                explanation="Exact match after normalization",
+                error_type=None,
+                explanation="Exact normalized match.",
+                details={
+                    "expected_normalized": normalized_candidates,
+                    "actual_normalized": actual_normalized,
+                    "comparison_result": "exact_match",
+                    "matched_candidate": matched_candidate,
+                    "strict_exact": strict_exact,
+                },
             )
 
-        best_similarity = max(
-            _token_overlap_score(candidate, actual_normalized)
-            for candidate in normalized_candidates
-        )
+        if allow_substring_match:
+            contained_candidate = next(
+                (
+                    candidate
+                    for candidate in normalized_candidates
+                    if _contains_normalized_phrase(actual_normalized, candidate)
+                ),
+                None,
+            )
+            if contained_candidate is not None:
+                return OracleEvaluation(
+                    is_correct=True,
+                    score=1.0,
+                    error_type=None,
+                    explanation="Expected answer found in normalized model output.",
+                    details={
+                        "expected_normalized": normalized_candidates,
+                        "actual_normalized": actual_normalized,
+                        "comparison_result": "contains_match",
+                        "matched_candidate": contained_candidate,
+                        "strict_exact": strict_exact,
+                    },
+                )
+
+        actual_value = _parse_number(actual_answer or "")
+        numeric_candidates = [value for value in (_parse_number(candidate) for candidate in valid_answers) if value is not None]
+        if actual_value is not None and numeric_candidates:
+            closest_expected = min(numeric_candidates, key=lambda value: abs(value - actual_value))
+            difference = abs(closest_expected - actual_value)
+            if difference <= number_tolerance:
+                return OracleEvaluation(
+                    is_correct=True,
+                    score=1.0,
+                    error_type=None,
+                    explanation="Numeric value matches expected answer within tolerance.",
+                    details={
+                        "expected_normalized": normalized_candidates,
+                        "actual_normalized": actual_normalized,
+                        "comparison_result": "numeric_equivalent",
+                        "expected_value": closest_expected,
+                        "actual_value": actual_value,
+                        "absolute_difference": difference,
+                        "number_tolerance": number_tolerance,
+                        "strict_exact": strict_exact,
+                    },
+                )
+
+        best_similarity = max(_token_overlap_score(candidate, actual_normalized) for candidate in normalized_candidates)
         partial_threshold = float(metadata.get("partial_threshold", 0.85))
         partial_as_correct = bool(metadata.get("partial_as_correct", False))
         is_correct = partial_as_correct and best_similarity >= partial_threshold
+        comparison_result = "partial_match" if best_similarity > 0 else "no_match"
+
         return OracleEvaluation(
             is_correct=is_correct,
             score=best_similarity,
-            explanation=(
-                "Exact match not found. "
-                f"Best normalized overlap score={best_similarity:.3f}"
-            ),
+            error_type=None if is_correct else "wrong_answer",
+            explanation=f"Exact match not found. Best overlap={best_similarity:.3f}.",
+            details={
+                "expected_normalized": normalized_candidates,
+                "actual_normalized": actual_normalized,
+                "comparison_result": comparison_result,
+                "partial_threshold": partial_threshold,
+                "partial_as_correct": partial_as_correct,
+                "strict_exact": strict_exact,
+            },
         )
 
 
@@ -88,29 +162,60 @@ class RegexMatchOracle(BaseOracle):
             return OracleEvaluation(
                 is_correct=False,
                 score=0.0,
-                explanation="No regex patterns provided",
+                error_type="invalid_oracle_config",
+                explanation="No regex patterns provided.",
+                details={"pattern": None, "matched": False, "extracted_groups": []},
             )
 
         actual_text = actual_answer or ""
         total_patterns = len(patterns)
         matched_count = 0
         invalid_patterns: list[str] = []
+        matched_patterns: list[str] = []
+        extracted_groups: dict[str, list[str]] = {}
 
         for pattern in patterns:
+            pattern_text = str(pattern)
             try:
-                if re.search(str(pattern), actual_text, flags=flags):
+                match = re.search(pattern_text, actual_text, flags=flags)
+                if match:
                     matched_count += 1
+                    matched_patterns.append(pattern_text)
+                    if match.groups():
+                        extracted_groups[pattern_text] = [str(group) for group in match.groups()]
             except re.error:
-                invalid_patterns.append(str(pattern))
+                invalid_patterns.append(pattern_text)
 
         score = matched_count / total_patterns if total_patterns else 0.0
         base_correct = matched_count == total_patterns if mode == "all" else matched_count > 0
         is_correct = base_correct and (not invalid_patterns or not strict_patterns)
+        if invalid_patterns and strict_patterns:
+            error_type = "invalid_regex_pattern"
+        elif is_correct:
+            error_type = None
+        else:
+            error_type = "wrong_answer"
 
-        explanation_parts = [f"Matched {matched_count}/{total_patterns} patterns"]
+        explanation = f"Matched {matched_count}/{total_patterns} regex patterns."
         if invalid_patterns:
-            explanation_parts.append(f"invalid_patterns={invalid_patterns}")
-        return OracleEvaluation(is_correct=is_correct, score=score, explanation=", ".join(explanation_parts))
+            explanation += f" invalid_patterns={invalid_patterns}"
+
+        return OracleEvaluation(
+            is_correct=is_correct,
+            score=score,
+            error_type=error_type,
+            explanation=explanation,
+            details={
+                "pattern": patterns[0] if len(patterns) == 1 else patterns,
+                "matched": bool(matched_count),
+                "matched_count": matched_count,
+                "total_patterns": total_patterns,
+                "mode": mode,
+                "invalid_patterns": invalid_patterns,
+                "matched_patterns": matched_patterns,
+                "extracted_groups": extracted_groups,
+            },
+        )
 
 
 class KeywordMatchOracle(BaseOracle):
@@ -130,19 +235,43 @@ class KeywordMatchOracle(BaseOracle):
             return OracleEvaluation(
                 is_correct=False,
                 score=0.0,
-                explanation="No keywords provided",
+                error_type="invalid_oracle_config",
+                explanation="No keywords provided.",
+                details={
+                    "required_keywords": [],
+                    "found_keywords": [],
+                    "missing_keywords": [],
+                    "coverage": 0.0,
+                    "threshold": 1.0,
+                },
             )
 
         actual_normalized = normalize_answer(actual_answer)
-        matched_keywords = [keyword for keyword in keywords if keyword in actual_normalized]
-        score = len(matched_keywords) / len(keywords)
+        found_keywords = [keyword for keyword in keywords if keyword in actual_normalized]
+        missing_keywords = [keyword for keyword in keywords if keyword not in found_keywords]
+        coverage = len(found_keywords) / len(keywords)
         mode = str(metadata.get("mode", "all")).lower()
+        threshold = float(metadata.get("threshold", 1.0 if mode == "all" else 0.01))
 
-        is_correct = score == 1.0 if mode == "all" else len(matched_keywords) > 0
-        explanation = (
-            f"Matched {len(matched_keywords)}/{len(keywords)} keywords: {matched_keywords}"
+        if mode == "all":
+            is_correct = coverage >= threshold and len(missing_keywords) == 0
+        else:
+            is_correct = coverage >= threshold and len(found_keywords) > 0
+
+        return OracleEvaluation(
+            is_correct=is_correct,
+            score=coverage,
+            error_type=None if is_correct else "wrong_answer",
+            explanation=f"Matched {len(found_keywords)}/{len(keywords)} keywords.",
+            details={
+                "required_keywords": keywords,
+                "found_keywords": found_keywords,
+                "missing_keywords": missing_keywords,
+                "coverage": coverage,
+                "threshold": threshold,
+                "mode": mode,
+            },
         )
-        return OracleEvaluation(is_correct=is_correct, score=score, explanation=explanation)
 
 
 class NumericToleranceOracle(BaseOracle):
@@ -162,10 +291,18 @@ class NumericToleranceOracle(BaseOracle):
             return OracleEvaluation(
                 is_correct=False,
                 score=0.0,
-                explanation="Could not parse numeric values",
+                error_type="numeric_parse_error",
+                explanation="Could not parse numeric values.",
+                details={
+                    "expected_value": expected_values,
+                    "actual_value": actual_value,
+                    "absolute_difference": None,
+                    "tolerance": tolerance,
+                },
             )
 
-        difference = min(abs(expected_value - actual_value) for expected_value in expected_values)
+        closest_expected = min(expected_values, key=lambda value: abs(value - actual_value))
+        difference = abs(closest_expected - actual_value)
         is_correct = difference <= tolerance
         if is_correct:
             score = 1.0
@@ -176,9 +313,15 @@ class NumericToleranceOracle(BaseOracle):
         return OracleEvaluation(
             is_correct=is_correct,
             score=score,
-            explanation=(
-                f"Difference={difference:.6f}, tolerance={tolerance:.6f}"
-            ),
+            error_type=None if is_correct else "wrong_answer",
+            explanation=f"Absolute difference={difference:.6f} (tolerance={tolerance:.6f}).",
+            details={
+                "expected_value": closest_expected,
+                "all_expected_values": expected_values,
+                "actual_value": actual_value,
+                "absolute_difference": difference,
+                "tolerance": tolerance,
+            },
         )
 
 
@@ -193,7 +336,19 @@ class JsonSchemaOracle(BaseOracle):
         try:
             schema = _get_schema(expected_answer=expected_answer, metadata=metadata)
         except ValueError as exc:
-            return OracleEvaluation(is_correct=False, score=0.0, explanation=str(exc))
+            return OracleEvaluation(
+                is_correct=False,
+                score=0.0,
+                error_type="invalid_oracle_config",
+                explanation=str(exc),
+                details={
+                    "parse_success": False,
+                    "schema_valid": False,
+                    "missing_fields": [],
+                    "extra_fields": [],
+                    "parse_error": str(exc),
+                },
+            )
 
         try:
             candidate_json = json.loads(actual_answer or "")
@@ -201,8 +356,25 @@ class JsonSchemaOracle(BaseOracle):
             return OracleEvaluation(
                 is_correct=False,
                 score=0.0,
-                explanation=f"Invalid JSON answer: {exc}",
+                error_type="json_parse_error",
+                explanation=f"Invalid JSON output: {exc.msg}",
+                details={
+                    "parse_success": False,
+                    "schema_valid": False,
+                    "missing_fields": [],
+                    "extra_fields": [],
+                    "parse_error": str(exc),
+                },
             )
+
+        required_fields = _required_fields(schema)
+        if isinstance(candidate_json, dict):
+            keys = set(candidate_json.keys())
+            missing_fields = sorted(required_fields - keys)
+            extra_fields = sorted(keys - schema.get("properties", {}).keys()) if isinstance(schema.get("properties"), dict) else []
+        else:
+            missing_fields = sorted(required_fields)
+            extra_fields = []
 
         try:
             validate(instance=candidate_json, schema=schema)
@@ -210,13 +382,29 @@ class JsonSchemaOracle(BaseOracle):
             return OracleEvaluation(
                 is_correct=False,
                 score=0.0,
+                error_type="json_schema_validation_error",
                 explanation=f"Schema validation failed: {exc.message}",
+                details={
+                    "parse_success": True,
+                    "schema_valid": False,
+                    "missing_fields": missing_fields,
+                    "extra_fields": extra_fields,
+                    "parse_error": None,
+                },
             )
 
         return OracleEvaluation(
             is_correct=True,
             score=1.0,
-            explanation="JSON matches schema",
+            error_type=None,
+            explanation="JSON output matches schema.",
+            details={
+                "parse_success": True,
+                "schema_valid": True,
+                "missing_fields": missing_fields,
+                "extra_fields": extra_fields,
+                "parse_error": None,
+            },
         )
 
 
@@ -235,19 +423,31 @@ class SemanticSimilarityOracle(BaseOracle):
         candidates = _extract_valid_answers(expected_answer, metadata)
         normalized_candidates = [normalize_answer(candidate) for candidate in candidates if normalize_answer(candidate)]
         if not normalized_candidates:
-            return OracleEvaluation(is_correct=False, score=0.0, explanation="No expected answers provided")
+            return OracleEvaluation(
+                is_correct=False,
+                score=0.0,
+                error_type="invalid_oracle_config",
+                explanation="No expected answers provided.",
+                details={"similarity_threshold": threshold, "candidate_count": 0},
+            )
 
-        best_score = max(
-            _token_overlap_score(candidate, actual_normalized)
-            for candidate in normalized_candidates
-        )
+        best_score = max(_token_overlap_score(candidate, actual_normalized) for candidate in normalized_candidates)
+        is_correct = best_score >= threshold
         return OracleEvaluation(
-            is_correct=best_score >= threshold,
+            is_correct=is_correct,
             score=best_score,
+            error_type=None if is_correct else "wrong_answer",
             explanation=(
                 "Semantic similarity placeholder based on token overlap. "
                 f"score={best_score:.3f}, threshold={threshold:.3f}"
             ),
+            details={
+                "similarity_threshold": threshold,
+                "best_similarity": best_score,
+                "comparison_type": "token_overlap_placeholder",
+                "expected_candidates": normalized_candidates,
+                "actual_normalized": actual_normalized,
+            },
         )
 
 
@@ -273,14 +473,17 @@ class CompositeRuleOracle(BaseOracle):
             must_contain = [normalize_answer(part) for part in expected_answer.split("||") if normalize_answer(part)]
 
         must_hits = [keyword for keyword in must_contain if keyword in actual_normalized]
+        must_misses = [keyword for keyword in must_contain if keyword not in must_hits]
         forbidden_hits = [keyword for keyword in forbidden_keywords if keyword in actual_normalized]
 
         regex_hits = 0
         invalid_patterns: list[str] = []
+        matched_patterns: list[str] = []
         for pattern in regex_constraints:
             try:
                 if re.search(pattern, actual_text, flags=flags):
                     regex_hits += 1
+                    matched_patterns.append(pattern)
             except re.error:
                 invalid_patterns.append(pattern)
 
@@ -299,6 +502,7 @@ class CompositeRuleOracle(BaseOracle):
             and regex_score == 1.0
             and not invalid_patterns
         )
+        error_type = "invalid_regex_pattern" if invalid_patterns else (None if is_correct else "wrong_answer")
 
         explanation = (
             f"must={len(must_hits)}/{len(must_contain) if must_contain else 0}, "
@@ -308,7 +512,22 @@ class CompositeRuleOracle(BaseOracle):
         if invalid_patterns:
             explanation += f", invalid_patterns={invalid_patterns}"
 
-        return OracleEvaluation(is_correct=is_correct, score=score, explanation=explanation)
+        return OracleEvaluation(
+            is_correct=is_correct,
+            score=score,
+            error_type=error_type,
+            explanation=explanation,
+            details={
+                "must_contain": must_contain,
+                "must_hits": must_hits,
+                "must_misses": must_misses,
+                "forbidden_keywords": forbidden_keywords,
+                "forbidden_hits": forbidden_hits,
+                "regex_constraints": regex_constraints,
+                "regex_hits": matched_patterns,
+                "invalid_patterns": invalid_patterns,
+            },
+        )
 
 
 class OracleFactory:
@@ -379,6 +598,22 @@ def _tokenize(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", text.lower())
 
 
+def _contains_normalized_phrase(text: str, phrase: str) -> bool:
+    if not text or not phrase:
+        return False
+    if text == phrase:
+        return True
+    text_tokens = text.split()
+    phrase_tokens = phrase.split()
+    phrase_len = len(phrase_tokens)
+    if phrase_len == 0 or phrase_len > len(text_tokens):
+        return False
+    for index in range(len(text_tokens) - phrase_len + 1):
+        if text_tokens[index : index + phrase_len] == phrase_tokens:
+            return True
+    return False
+
+
 def _get_schema(expected_answer: str, metadata: dict[str, Any]) -> dict[str, Any]:
     schema = metadata.get("schema")
     if isinstance(schema, dict):
@@ -401,3 +636,10 @@ def _get_schema(expected_answer: str, metadata: dict[str, Any]) -> dict[str, Any
     if not isinstance(parsed_expected, dict):
         raise ValueError("Expected schema must be a JSON object")
     return parsed_expected
+
+
+def _required_fields(schema: dict[str, Any]) -> set[str]:
+    raw_required = schema.get("required")
+    if not isinstance(raw_required, list):
+        return set()
+    return {str(field) for field in raw_required}

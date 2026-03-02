@@ -24,13 +24,13 @@ def test_initialize_storage_schema_creates_required_tables(monkeypatch, tmp_path
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'main'
-          AND table_name IN ('test_cases', 'test_runs', 'test_results')
+          AND table_name IN ('test_cases', 'test_runs', 'test_results', 'evaluation_traces')
         ORDER BY table_name;
         """
     ).fetchall()
     conn.close()
 
-    assert [row[0] for row in rows] == ["test_cases", "test_results", "test_runs"]
+    assert [row[0] for row in rows] == ["evaluation_traces", "test_cases", "test_results", "test_runs"]
 
 
 def test_insert_test_cases_create_run_insert_results_and_fetch_summary(monkeypatch, tmp_path) -> None:
@@ -136,18 +136,19 @@ def test_initialize_storage_schema_migrates_legacy_test_cases_table(monkeypatch,
         ORDER BY ordinal_position;
         """
     ).fetchall()
-    backups = conn.execute(
+    backup_count = conn.execute(
         """
-        SELECT table_name
+        SELECT COUNT(*)
         FROM information_schema.tables
         WHERE table_schema = 'main'
           AND table_name LIKE 'test_cases__backup_%';
         """
-    ).fetchall()
+    ).fetchone()[0]
     conn.close()
 
-    assert [column[0] for column in columns] == [
+    expected_columns = {
         "test_case_id",
+        "test_source",
         "dataset_version",
         "category",
         "difficulty",
@@ -155,8 +156,11 @@ def test_initialize_storage_schema_migrates_legacy_test_cases_table(monkeypatch,
         "expected_answer",
         "oracle_type",
         "metadata",
-    ]
-    assert len(backups) == 1
+    }
+    present_columns = {column[0] for column in columns}
+    assert expected_columns.issubset(present_columns)
+    assert {"batch_id", "case_id", "prompt"}.issubset(present_columns)
+    assert backup_count == 0
 
 
 def test_create_test_run_auto_increments_repetition_index(monkeypatch, tmp_path) -> None:

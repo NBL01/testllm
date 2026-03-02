@@ -46,11 +46,13 @@ def render_error_insight(report: ReliabilityReport) -> None:
 
 def render_top_insights(insights: RunInsights) -> None:
     st.subheader("Insights")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Weakest Category", insights.weakest_category)
     c2.metric("Strongest Category", insights.strongest_category)
     c3.metric("Top Error Type", insights.most_frequent_error_type)
     c4.metric("Vs Previous Run", insights.improvement_status.replace("_", " ").title())
+    c5.metric("Failures Concentrated In", insights.failure_heavy_source)
+    st.caption(insights.promotion_hint)
 
 
 def render_run_comparison_summary(bundle: RunComparisonBundle) -> None:

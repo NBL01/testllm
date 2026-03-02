@@ -2,9 +2,10 @@ import hashlib
 import random
 from dataclasses import dataclass
 
+from llm_reliability_analytics.runner.llm_client import BaseLLMClient
 
 @dataclass
-class MockLLMClient:
+class MockLLMClient(BaseLLMClient):
     """Simple mock LLM for demo/test runner usage."""
 
     mode: str = "deterministic"

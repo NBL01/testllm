@@ -19,6 +19,8 @@ def test_exact_match_oracle_supports_normalization_and_multi_answers() -> None:
     assert result.is_correct is True
     assert result.score == 1.0
     assert result.explanation is not None
+    assert result.error_type is None
+    assert result.details["comparison_result"] == "exact_match"
 
 
 def test_exact_match_oracle_partial_scoring() -> None:
@@ -31,6 +33,28 @@ def test_exact_match_oracle_partial_scoring() -> None:
     assert 0.0 < result.score < 1.0
 
 
+def test_exact_match_oracle_lenient_contains_match() -> None:
+    oracle = ExactMatchOracle()
+    result = oracle.evaluate(
+        expected_answer="4",
+        actual_answer="2 + 2 = 4.",
+    )
+    assert result.is_correct is True
+    assert result.score == 1.0
+    assert result.details["comparison_result"] == "contains_match"
+
+
+def test_exact_match_oracle_strict_mode_disables_contains_match() -> None:
+    oracle = ExactMatchOracle()
+    result = oracle.evaluate(
+        expected_answer="4",
+        actual_answer="2 + 2 = 4.",
+        metadata={"strict_exact": True},
+    )
+    assert result.is_correct is False
+    assert result.error_type == "wrong_answer"
+
+
 def test_regex_match_oracle_with_multiple_patterns_partial_score() -> None:
     oracle = RegexMatchOracle()
     result = oracle.evaluate(
@@ -40,6 +64,7 @@ def test_regex_match_oracle_with_multiple_patterns_partial_score() -> None:
     )
     assert result.is_correct is False
     assert result.score == 0.5
+    assert result.details["matched_count"] == 1
 
 
 def test_regex_match_oracle_invalid_pattern_edge_case() -> None:
@@ -52,6 +77,7 @@ def test_regex_match_oracle_invalid_pattern_edge_case() -> None:
     assert result.is_correct is False
     assert result.score == 0.5
     assert "invalid_patterns" in (result.explanation or "")
+    assert result.error_type == "invalid_regex_pattern"
 
 
 def test_regex_match_oracle() -> None:
@@ -71,6 +97,7 @@ def test_keyword_match_oracle() -> None:
     assert result.is_correct is True
     assert 0.0 < result.score < 1.0
     assert "Matched" in (result.explanation or "")
+    assert result.details["coverage"] == result.score
 
 
 def test_keyword_match_uses_normalization() -> None:
@@ -93,6 +120,7 @@ def test_numeric_tolerance_oracle() -> None:
     )
     assert result.is_correct is True
     assert result.score == 1.0
+    assert result.details["absolute_difference"] is not None
 
 
 def test_numeric_tolerance_supports_multiple_valid_answers() -> None:
@@ -120,6 +148,8 @@ def test_json_schema_oracle() -> None:
     )
     assert result.is_correct is True
     assert result.score == 1.0
+    assert result.details["parse_success"] is True
+    assert result.details["schema_valid"] is True
 
 
 def test_semantic_similarity_oracle_placeholder() -> None:
@@ -173,6 +203,7 @@ def test_composite_rule_oracle_invalid_regex_edge_case() -> None:
     )
     assert result.is_correct is False
     assert "invalid_patterns" in (result.explanation or "")
+    assert result.error_type == "invalid_regex_pattern"
 
 
 def test_oracle_factory_selects_correct_type() -> None:

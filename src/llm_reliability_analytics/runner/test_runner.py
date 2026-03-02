@@ -2,6 +2,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from llm_reliability_analytics.models.domain import TestCase, TestResult
+from llm_reliability_analytics.runner.llm_client import BaseLLMClient
 from llm_reliability_analytics.runner.mock_client import MockLLMClient
 
 
@@ -11,7 +12,7 @@ class TestRunner:
     Scoring is intentionally handled in the oracle layer, not here.
     """
 
-    def __init__(self, llm_client: MockLLMClient | None = None) -> None:
+    def __init__(self, llm_client: BaseLLMClient | None = None) -> None:
         self.llm_client = llm_client or MockLLMClient()
 
     def run(
@@ -31,24 +32,36 @@ class TestRunner:
                 start = perf_counter()
                 actual_answer: str | None = None
                 error_type: str | None = None
+                latency_source = "measured"
+                latency_ms = 0.0
 
                 try:
-                    actual_answer = self.llm_client.generate(test_case.prompt)
+                    generation = self.llm_client.generate_with_metadata(test_case.prompt)
+                    actual_answer = generation.text
+                    measured_latency_ms = (perf_counter() - start) * 1000
+                    if generation.latency_ms is not None:
+                        latency_ms = float(generation.latency_ms)
+                        latency_source = "provider_reported"
+                    else:
+                        latency_ms = measured_latency_ms
                 except Exception as exc:  # noqa: BLE001 - demo runner should be fault tolerant
                     error_type = type(exc).__name__
+                    latency_ms = (perf_counter() - start) * 1000
 
-                latency_ms = (perf_counter() - start) * 1000
                 results.append(
                     TestResult(
                         run_id=active_run_id,
                         test_case_id=test_case.id,
                         attempt_index=attempt_index,
                         category=test_case.category,
+                        test_source=test_case.test_source.value,
                         dataset_version=test_case.dataset_version,
+                        raw_output=actual_answer,
                         actual_answer=actual_answer,
                         is_correct=False,
                         score=0.0,
                         latency_ms=latency_ms,
+                        latency_source=latency_source,
                         error_type=error_type,
                     )
                 )
