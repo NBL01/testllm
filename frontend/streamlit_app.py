@@ -71,13 +71,13 @@ def main() -> None:
 
     launcher = get_run_launcher()
     db_signature = _db_signature(DataProvider(project_root=PROJECT_ROOT).db_path)
-    runs_df, _cases_df, results_df, source, note, db_path = load_dashboard_data(db_signature)
+    runs_df, cases_df, results_df, source, note, db_path = load_dashboard_data(db_signature)
     adapter = MetricsAdapter()
 
     st.sidebar.header("Workspace")
     page = st.sidebar.radio(
         "Page",
-        ["Analytics Dashboard", "Run New Evaluation", "Model Comparison"],
+        ["Analytics Dashboard", "Run New Evaluation", "Model Comparison", "Dataset Studio (V2 Preview)"],
         index=0,
     )
     if st.sidebar.button("Refresh data"):
@@ -96,6 +96,10 @@ def main() -> None:
 
     if page == "Model Comparison":
         _render_model_comparison_page(adapter=adapter, runs_df=runs_df, results_df=results_df)
+        return
+
+    if page == "Dataset Studio (V2 Preview)":
+        _render_dataset_studio_page(cases_df=cases_df, results_df=results_df)
         return
 
     st.sidebar.header("Run Selection")
@@ -708,6 +712,49 @@ def _render_model_comparison_page(
     st.subheader("Category-wise Delta (Median Aggregated)")
     plot_category_accuracy_delta(category_delta)
     st.dataframe(category_delta, use_container_width=True, hide_index=True)
+
+
+def _render_dataset_studio_page(cases_df: pd.DataFrame, results_df: pd.DataFrame) -> None:
+    st.subheader("Dataset Studio (V2 Preview)")
+    st.caption("Planning and first implementation layer for candidate generation, review, and promotion workflows.")
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Stored test cases", f"{len(cases_df):,}")
+    c2.metric("Stored result attempts", f"{len(results_df):,}")
+    c3.metric("Distinct dataset versions", f"{cases_df['dataset_version'].nunique() if not cases_df.empty else 0}")
+
+    st.markdown("### Current Dataset Inventory")
+    if cases_df.empty:
+        st.info("No test cases loaded in storage yet.")
+    else:
+        summary = (
+            cases_df.groupby(["dataset_version", "test_source", "category"], dropna=False)
+            .size()
+            .reset_index(name="count")
+            .sort_values(["dataset_version", "test_source", "category"])
+        )
+        st.dataframe(summary, use_container_width=True, hide_index=True)
+
+    st.markdown("### Candidate Authoring Workflow (Target State)")
+    st.markdown(
+        """
+        1. Detect weak categories from recent runs.
+        2. Generate candidate test cases (`scripts/generate_candidates.py`).
+        3. Validate and score candidate quality.
+        4. Human review and approve/reject.
+        5. Promote approved cases to regression/adversarial datasets.
+        """
+    )
+
+    st.markdown("### Useful Commands")
+    st.code(
+        "python scripts/generate_candidates.py --categories factual_qa,classification --per-category 5",
+        language="bash",
+    )
+    st.code(
+        "python scripts/generate_candidates.py --provider ollama --model qwen2.5:0.5b --categories numeric_reasoning --per-category 4",
+        language="bash",
+    )
 
 
 def _render_run_launcher(launcher: RunLauncher) -> None:

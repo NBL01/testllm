@@ -1,17 +1,28 @@
-"""Minimal API endpoints for the first defense demo."""
+"""API endpoints for evaluation runs and candidate test authoring workflow."""
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from llm_reliability_analytics.analytics.reliability import ReliabilityReport
+from llm_reliability_analytics.runner.client_factory import build_llm_client
 from llm_reliability_analytics.runner.llm_client import (
     LLMModelNotFoundError,
     LLMRequestError,
     LLMServiceUnavailableError,
 )
+from llm_reliability_analytics.storage.candidate_repository import (
+    CandidateReviewEvent,
+    get_candidate_test_case,
+    list_candidate_review_events,
+    list_candidate_test_cases,
+    update_candidate_status,
+    upsert_candidate_test_cases,
+)
 from llm_reliability_analytics.storage.duckdb_store import RunAggregatedSummary
+from llm_reliability_analytics.test_authoring.models import CandidateStatus, CandidateTestCase
+from llm_reliability_analytics.test_authoring.service import CandidateAuthoringService
 from llm_reliability_analytics.workflow.service import (
     RunNotFoundError,
     load_cases_to_storage,
@@ -74,6 +85,44 @@ class RunReportResponse(BaseModel):
     report: ReliabilityReport
 
 
+class GenerateCandidatesRequest(BaseModel):
+    categories: list[str] = Field(default_factory=list)
+    per_category: int = Field(default=5, ge=1, le=100)
+    provider: Literal["none", "mock", "ollama"] = "none"
+    model_name: str | None = None
+    temperature: float = 0.1
+    max_output_tokens: int = Field(default=120, ge=1, le=1024)
+    timeout_seconds: float = Field(default=20.0, ge=1.0, le=300.0)
+
+
+class GenerateCandidatesResponse(BaseModel):
+    generated_count: int
+    stored_count: int
+    categories: list[str]
+    candidates: list[CandidateTestCase]
+
+
+class CandidateListResponse(BaseModel):
+    total: int
+    items: list[CandidateTestCase]
+
+
+class UpdateCandidateStatusRequest(BaseModel):
+    new_status: CandidateStatus
+    reviewer: str = ""
+    note: str = ""
+
+
+class UpdateCandidateStatusResponse(BaseModel):
+    candidate: CandidateTestCase
+
+
+class CandidateEventsResponse(BaseModel):
+    candidate_id: str
+    total: int
+    events: list[CandidateReviewEvent]
+
+
 @router.get("/health")
 def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
@@ -128,3 +177,71 @@ def get_report(run_id: str) -> RunReportResponse:
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return RunReportResponse(**report.model_dump())
+
+
+@router.post("/candidates/generate", response_model=GenerateCandidatesResponse)
+def generate_candidates_endpoint(request: GenerateCandidatesRequest) -> GenerateCandidatesResponse:
+    llm_client = None
+    if request.provider != "none":
+        resolved_model = request.model_name or ("mock-baseline" if request.provider == "mock" else None)
+        llm_client = build_llm_client(
+            provider=request.provider,
+            run_mode="real_local" if request.provider == "ollama" else "mock",
+            model_name=resolved_model,
+            temperature=request.temperature,
+            max_output_tokens=request.max_output_tokens,
+            timeout_seconds=request.timeout_seconds,
+        )
+
+    service = CandidateAuthoringService(llm_client=llm_client)
+    candidates = service.generate_candidates(
+        categories=request.categories,
+        per_category=request.per_category,
+    )
+    stored_count = upsert_candidate_test_cases(candidates)
+    categories = sorted({candidate.category for candidate in candidates})
+
+    return GenerateCandidatesResponse(
+        generated_count=len(candidates),
+        stored_count=stored_count,
+        categories=categories,
+        candidates=candidates,
+    )
+
+
+@router.get("/candidates", response_model=CandidateListResponse)
+def list_candidates_endpoint(
+    status: CandidateStatus | None = Query(default=None),
+    category: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=5000),
+) -> CandidateListResponse:
+    items = list_candidate_test_cases(status=status, category=category, max_rows=limit)
+    return CandidateListResponse(total=len(items), items=items)
+
+
+@router.post("/candidates/{candidate_id}/status", response_model=UpdateCandidateStatusResponse)
+def update_candidate_status_endpoint(
+    candidate_id: str,
+    request: UpdateCandidateStatusRequest,
+) -> UpdateCandidateStatusResponse:
+    updated = update_candidate_status(
+        candidate_id=candidate_id,
+        new_status=request.new_status,
+        reviewer=request.reviewer,
+        note=request.note,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"Candidate not found: {candidate_id}")
+    return UpdateCandidateStatusResponse(candidate=updated)
+
+
+@router.get("/candidates/{candidate_id}/events", response_model=CandidateEventsResponse)
+def candidate_events_endpoint(
+    candidate_id: str,
+    limit: int = Query(default=100, ge=1, le=5000),
+) -> CandidateEventsResponse:
+    candidate = get_candidate_test_case(candidate_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail=f"Candidate not found: {candidate_id}")
+    events = list_candidate_review_events(candidate_id=candidate_id, max_rows=limit)
+    return CandidateEventsResponse(candidate_id=candidate_id, total=len(events), events=events)

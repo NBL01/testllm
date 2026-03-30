@@ -200,6 +200,36 @@ python scripts/run_batch.py \
 - `POST /load-test-cases`
 - `POST /run-batch`
 - `GET /report/{run_id}`
+- `POST /candidates/generate`
+- `GET /candidates`
+- `POST /candidates/{candidate_id}/status`
+- `GET /candidates/{candidate_id}/events`
+
+## V2 Scope and Roadmap
+
+- Product scope: `docs/PRODUCT_SCOPE_V2.md`
+- Delivery roadmap: `docs/ROADMAP_V2.md`
+
+## Candidate Test Authoring (V2 Starter)
+
+Generate review candidates with seeded logic:
+
+```bash
+python scripts/generate_candidates.py --categories factual_qa,classification --per-category 5
+```
+
+Optional model-assisted prompt rewrite:
+
+```bash
+python scripts/generate_candidates.py \
+  --provider ollama \
+  --model qwen2.5:0.5b \
+  --categories numeric_reasoning,format_constrained_json \
+  --per-category 4
+```
+
+Default output:
+- `data/candidates/generated_candidate_test_cases.jsonl`
 
 ## Notes
 

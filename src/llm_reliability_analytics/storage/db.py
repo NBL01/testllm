@@ -96,6 +96,31 @@ EXPECTED_TABLE_COLUMNS: dict[str, list[str]] = {
         "explanation",
         "created_at",
     ],
+    "candidate_test_cases": [
+        "candidate_id",
+        "category",
+        "difficulty",
+        "prompt",
+        "expected_answer",
+        "oracle_type",
+        "source_context",
+        "rationale",
+        "quality_score",
+        "validation_errors",
+        "status",
+        "metadata",
+        "created_at",
+        "updated_at",
+    ],
+    "candidate_review_events": [
+        "event_id",
+        "candidate_id",
+        "old_status",
+        "new_status",
+        "reviewer",
+        "note",
+        "created_at",
+    ],
 }
 
 MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
@@ -173,6 +198,31 @@ MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
         "is_correct": "BOOLEAN",
         "error_type": "TEXT",
         "explanation": "TEXT",
+        "created_at": "TIMESTAMP",
+    },
+    "candidate_test_cases": {
+        "candidate_id": "TEXT",
+        "category": "TEXT",
+        "difficulty": "TEXT",
+        "prompt": "TEXT",
+        "expected_answer": "TEXT",
+        "oracle_type": "TEXT",
+        "source_context": "TEXT",
+        "rationale": "TEXT",
+        "quality_score": "DOUBLE",
+        "validation_errors": "JSON",
+        "status": "TEXT",
+        "metadata": "JSON",
+        "created_at": "TIMESTAMP",
+        "updated_at": "TIMESTAMP",
+    },
+    "candidate_review_events": {
+        "event_id": "TEXT",
+        "candidate_id": "TEXT",
+        "old_status": "TEXT",
+        "new_status": "TEXT",
+        "reviewer": "TEXT",
+        "note": "TEXT",
         "created_at": "TIMESTAMP",
     },
 }
@@ -263,6 +313,35 @@ CREATE_TABLE_SQL: dict[str, str] = {
             created_at TIMESTAMP
         );
     """,
+    "candidate_test_cases": """
+        CREATE TABLE IF NOT EXISTS candidate_test_cases (
+            candidate_id TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            difficulty TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            expected_answer TEXT NOT NULL,
+            oracle_type TEXT NOT NULL,
+            source_context TEXT,
+            rationale TEXT,
+            quality_score DOUBLE NOT NULL,
+            validation_errors JSON,
+            status TEXT NOT NULL,
+            metadata JSON,
+            created_at TIMESTAMP,
+            updated_at TIMESTAMP
+        );
+    """,
+    "candidate_review_events": """
+        CREATE TABLE IF NOT EXISTS candidate_review_events (
+            event_id TEXT PRIMARY KEY,
+            candidate_id TEXT NOT NULL,
+            old_status TEXT,
+            new_status TEXT NOT NULL,
+            reviewer TEXT,
+            note TEXT,
+            created_at TIMESTAMP
+        );
+    """,
 }
 
 
@@ -282,7 +361,14 @@ def get_connection() -> duckdb.DuckDBPyConnection:
 
 def initialize_database() -> None:
     conn = get_connection()
-    for table_name in ("test_cases", "test_runs", "test_results", "evaluation_traces"):
+    for table_name in (
+        "test_cases",
+        "test_runs",
+        "test_results",
+        "evaluation_traces",
+        "candidate_test_cases",
+        "candidate_review_events",
+    ):
         _ensure_table_schema(conn, table_name)
     conn.close()
 

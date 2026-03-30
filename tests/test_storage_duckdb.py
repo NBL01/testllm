@@ -24,13 +24,27 @@ def test_initialize_storage_schema_creates_required_tables(monkeypatch, tmp_path
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema = 'main'
-          AND table_name IN ('test_cases', 'test_runs', 'test_results', 'evaluation_traces')
+          AND table_name IN (
+              'test_cases',
+              'test_runs',
+              'test_results',
+              'evaluation_traces',
+              'candidate_test_cases',
+              'candidate_review_events'
+          )
         ORDER BY table_name;
         """
     ).fetchall()
     conn.close()
 
-    assert [row[0] for row in rows] == ["evaluation_traces", "test_cases", "test_results", "test_runs"]
+    assert [row[0] for row in rows] == [
+        "candidate_review_events",
+        "candidate_test_cases",
+        "evaluation_traces",
+        "test_cases",
+        "test_results",
+        "test_runs",
+    ]
 
 
 def test_insert_test_cases_create_run_insert_results_and_fetch_summary(monkeypatch, tmp_path) -> None:
