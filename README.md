@@ -231,6 +231,10 @@ python scripts/generate_candidates.py \
 Default output:
 - `data/candidates/generated_candidate_test_cases.jsonl`
 
+From Streamlit Dataset Studio, approved candidates can be promoted and exported as versioned JSONL:
+- Regression/Synthetic export: `data/raw/<dataset_version>_<source>_promoted.jsonl`
+- Adversarial export: `data/adversarial/<dataset_version>_adversarial_promoted.jsonl`
+
 ## Notes
 
 - DuckDB file path: `data/reliability.duckdb`

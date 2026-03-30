@@ -47,7 +47,16 @@ from frontend.services.metrics_adapter import MetricsAdapter  # noqa: E402
 from frontend.services.result_inspector import fetch_result_trace, fetch_results_by_category  # noqa: E402
 from frontend.services.run_launcher import LaunchRequest, RunLauncher  # noqa: E402
 from frontend.services.trace_service import mark_trace_candidate  # noqa: E402
+from frontend.services.candidate_service import (  # noqa: E402
+    DEFAULT_AUTHORING_CATEGORIES,
+    candidate_events_frame,
+    generate_candidates_and_store,
+    list_candidates_frame,
+    promote_candidates,
+    set_candidate_status,
+)
 from frontend.utils.formatters import as_int, dt, mode_badge, pct  # noqa: E402
+from llm_reliability_analytics.test_authoring.models import CandidateStatus  # noqa: E402
 
 
 st.set_page_config(page_title="LLM Reliability Dashboard", layout="wide")
@@ -601,6 +610,19 @@ def _result_option_label(frame: pd.DataFrame, result_id: str) -> str:
     )
 
 
+def _candidate_option_label(frame: pd.DataFrame, candidate_id: str) -> str:
+    rows = frame[frame["candidate_id"].astype(str) == str(candidate_id)]
+    if rows.empty:
+        return str(candidate_id)
+    row = rows.iloc[0]
+    return (
+        f"{row.get('status', 'unknown').upper()} | "
+        f"{row.get('category', 'unknown')} | "
+        f"score={float(row.get('quality_score', 0.0) or 0.0):.2f} | "
+        f"id={row.get('candidate_id', candidate_id)}"
+    )
+
+
 def _render_run_new_page(launcher: RunLauncher, runs_df: pd.DataFrame) -> None:
     _render_run_launcher(launcher)
 
@@ -715,8 +737,8 @@ def _render_model_comparison_page(
 
 
 def _render_dataset_studio_page(cases_df: pd.DataFrame, results_df: pd.DataFrame) -> None:
-    st.subheader("Dataset Studio (V2 Preview)")
-    st.caption("Planning and first implementation layer for candidate generation, review, and promotion workflows.")
+    st.subheader("Dataset Studio")
+    st.caption("Generate candidate tests, review them, and promote approved cases into versioned datasets.")
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Stored test cases", f"{len(cases_df):,}")
@@ -735,26 +757,219 @@ def _render_dataset_studio_page(cases_df: pd.DataFrame, results_df: pd.DataFrame
         )
         st.dataframe(summary, use_container_width=True, hide_index=True)
 
-    st.markdown("### Candidate Authoring Workflow (Target State)")
-    st.markdown(
-        """
-        1. Detect weak categories from recent runs.
-        2. Generate candidate test cases (`scripts/generate_candidates.py`).
-        3. Validate and score candidate quality.
-        4. Human review and approve/reject.
-        5. Promote approved cases to regression/adversarial datasets.
-        """
+    st.markdown("### 1) Generate Candidates")
+    generation_categories = st.multiselect(
+        "Categories",
+        DEFAULT_AUTHORING_CATEGORIES,
+        default=DEFAULT_AUTHORING_CATEGORIES,
+        key="candidate_gen_categories",
+    )
+    gen_col1, gen_col2, gen_col3 = st.columns(3)
+    per_category = int(
+        gen_col1.number_input("Per category", min_value=1, max_value=30, value=4, step=1, key="candidate_gen_count")
+    )
+    provider = gen_col2.selectbox(
+        "Authoring model provider",
+        ["none", "mock", "ollama"],
+        index=0,
+        key="candidate_gen_provider",
+    )
+    model_name = gen_col3.text_input("Model (optional)", value="", key="candidate_gen_model")
+
+    gen_opts_col1, gen_opts_col2, gen_opts_col3 = st.columns(3)
+    authoring_temperature = float(
+        gen_opts_col1.slider(
+            "Authoring temperature",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.1,
+            step=0.05,
+            key="candidate_gen_temp",
+        )
+    )
+    authoring_max_tokens = int(
+        gen_opts_col2.number_input(
+            "Authoring max output tokens",
+            min_value=32,
+            max_value=512,
+            value=120,
+            step=8,
+            key="candidate_gen_tokens",
+        )
+    )
+    authoring_timeout = float(
+        gen_opts_col3.number_input(
+            "Authoring timeout sec",
+            min_value=5.0,
+            max_value=120.0,
+            value=20.0,
+            step=1.0,
+            key="candidate_gen_timeout",
+        )
     )
 
-    st.markdown("### Useful Commands")
-    st.code(
-        "python scripts/generate_candidates.py --categories factual_qa,classification --per-category 5",
-        language="bash",
+    if st.button("Generate and Store Candidates", key="candidate_generate_button", type="primary"):
+        with st.spinner("Generating candidates..."):
+            try:
+                generated = generate_candidates_and_store(
+                    categories=generation_categories,
+                    per_category=per_category,
+                    provider=provider,  # type: ignore[arg-type]
+                    model_name=model_name.strip() or None,
+                    temperature=authoring_temperature,
+                    max_output_tokens=authoring_max_tokens,
+                    timeout_seconds=authoring_timeout,
+                )
+            except Exception as exc:  # noqa: BLE001 - UI should remain stable
+                st.error(f"Candidate generation failed: {exc}")
+            else:
+                st.success(f"Generated and stored {len(generated)} candidates.")
+                load_dashboard_data.clear()
+                st.rerun()
+
+    st.divider()
+    st.markdown("### 2) Review Candidates")
+
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    status_filter_raw = filter_col1.selectbox(
+        "Status filter",
+        ["all", "draft", "reviewed", "approved", "rejected"],
+        index=0,
+        key="candidate_status_filter",
     )
-    st.code(
-        "python scripts/generate_candidates.py --provider ollama --model qwen2.5:0.5b --categories numeric_reasoning --per-category 4",
-        language="bash",
+    category_filter_raw = filter_col2.selectbox(
+        "Category filter",
+        ["all"] + DEFAULT_AUTHORING_CATEGORIES,
+        index=0,
+        key="candidate_category_filter",
     )
+    max_rows = int(
+        filter_col3.number_input(
+            "Max rows",
+            min_value=20,
+            max_value=5000,
+            value=500,
+            step=20,
+            key="candidate_max_rows",
+        )
+    )
+
+    status_filter = None if status_filter_raw == "all" else CandidateStatus(status_filter_raw)
+    category_filter = None if category_filter_raw == "all" else category_filter_raw
+    candidate_df = list_candidates_frame(status=status_filter, category=category_filter, limit=max_rows)
+
+    if candidate_df.empty:
+        st.info("No candidate test cases found for current filters.")
+    else:
+        preview_cols = [
+            "candidate_id",
+            "status",
+            "category",
+            "difficulty",
+            "oracle_type",
+            "quality_score",
+            "validation_error_count",
+            "created_at",
+        ]
+        st.dataframe(candidate_df[preview_cols], use_container_width=True, hide_index=True)
+
+        selected_candidate_id = st.selectbox(
+            "Selected candidate",
+            candidate_df["candidate_id"].astype(str).tolist(),
+            key="candidate_selected_id",
+            format_func=lambda cid: _candidate_option_label(candidate_df, cid),
+        )
+        selected_row = candidate_df[candidate_df["candidate_id"].astype(str) == str(selected_candidate_id)].iloc[0]
+
+        with st.expander("Candidate details", expanded=True):
+            st.write(f"**Category:** {selected_row['category']}")
+            st.write(f"**Status:** {selected_row['status']}")
+            st.write(f"**Oracle type:** {selected_row['oracle_type']}")
+            st.write(f"**Quality score:** {float(selected_row['quality_score']):.3f}")
+            st.write(f"**Prompt:** {selected_row['prompt']}")
+            st.write(f"**Expected answer:** {selected_row['expected_answer']}")
+            if str(selected_row["validation_errors"]).strip():
+                st.warning(f"Validation issues: {selected_row['validation_errors']}")
+
+        review_col1, review_col2 = st.columns(2)
+        reviewer = review_col1.text_input("Reviewer", value="nbl", key="candidate_reviewer")
+        new_status = review_col2.selectbox(
+            "Set status",
+            ["draft", "reviewed", "approved", "rejected"],
+            index=["draft", "reviewed", "approved", "rejected"].index(str(selected_row["status"])),
+            key="candidate_new_status",
+        )
+        review_note = st.text_area("Review note", value="", key="candidate_review_note")
+
+        if st.button("Apply Status Update", key="candidate_apply_status"):
+            updated = set_candidate_status(
+                candidate_id=str(selected_candidate_id),
+                new_status=CandidateStatus(new_status),
+                reviewer=reviewer.strip(),
+                note=review_note.strip(),
+            )
+            if updated is None:
+                st.error("Candidate not found.")
+            else:
+                st.success(f"Candidate {selected_candidate_id} updated to {updated.status.value}.")
+                load_dashboard_data.clear()
+                st.rerun()
+
+        events_df = candidate_events_frame(str(selected_candidate_id), limit=200)
+        st.markdown("**Review history**")
+        if events_df.empty:
+            st.info("No review events yet.")
+        else:
+            st.dataframe(events_df, use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.markdown("### 3) Promote Approved Candidates")
+    approved_df = list_candidates_frame(status=CandidateStatus.APPROVED, category=None, limit=5000)
+    if approved_df.empty:
+        st.info("No approved candidates available for promotion.")
+    else:
+        promotion_ids = st.multiselect(
+            "Approved candidate IDs",
+            approved_df["candidate_id"].astype(str).tolist(),
+            default=approved_df["candidate_id"].astype(str).tolist()[: min(10, len(approved_df))],
+            key="candidate_promote_ids",
+        )
+        promote_col1, promote_col2 = st.columns(2)
+        target_source = promote_col1.selectbox(
+            "Target test_source",
+            ["regression", "adversarial", "synthetic"],
+            index=0,
+            key="candidate_promote_source",
+        )
+        dataset_version = promote_col2.text_input(
+            "Target dataset version",
+            value="v2.2-candidate-promo",
+            key="candidate_promote_dataset_version",
+        )
+        export_to_jsonl = st.checkbox(
+            "Export promoted set to JSONL file",
+            value=True,
+            key="candidate_promote_export_jsonl",
+        )
+
+        if st.button("Promote Selected Candidates", key="candidate_promote_button"):
+            result = promote_candidates(
+                candidate_ids=promotion_ids,
+                dataset_version=dataset_version.strip() or "v2.2-candidate-promo",
+                target_source=target_source,  # type: ignore[arg-type]
+                export_to_jsonl=bool(export_to_jsonl),
+                project_root=PROJECT_ROOT,
+            )
+            st.success(
+                "Promotion finished: "
+                f"promoted={result.promoted}, "
+                f"skipped_not_approved={result.skipped_not_approved}, "
+                f"skipped_not_found={result.skipped_not_found}."
+            )
+            if result.export_path:
+                st.info(f"Exported {result.exported_count} promoted cases to: `{result.export_path}`")
+            load_dashboard_data.clear()
+            st.rerun()
 
 
 def _render_run_launcher(launcher: RunLauncher) -> None:
