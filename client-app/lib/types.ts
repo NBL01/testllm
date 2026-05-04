@@ -43,6 +43,12 @@ export type JobRunResult = {
   };
 };
 
+export type QueueProcessResult = {
+  requested_max_jobs: number;
+  processed_count: number;
+  results: JobRunResult[];
+};
+
 export type JobSummaryResult = {
   job: EvaluationJob;
   storage_summary: Record<string, unknown>;

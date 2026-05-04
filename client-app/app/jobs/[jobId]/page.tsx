@@ -8,6 +8,8 @@ import {
   getJobReport,
   getJobSummary,
   getJobTraces,
+  processQueue,
+  queueJob,
   runJob
 } from "@/lib/api";
 import type {
@@ -38,12 +40,24 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   const [report, setReport] = useState<JobReportPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [queueing, setQueueing] = useState(false);
+  const [processingQueue, setProcessingQueue] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
-  const canRun = useMemo(() => {
+  const canRunNow = useMemo(() => {
     if (!job) return false;
     return job.status === "draft" && !job.linked_run_id;
+  }, [job]);
+
+  const canQueue = useMemo(() => {
+    if (!job) return false;
+    return job.status === "draft" && !job.linked_run_id;
+  }, [job]);
+
+  const canProcessQueue = useMemo(() => {
+    if (!job) return false;
+    return job.status === "queued" && !job.linked_run_id;
   }, [job]);
 
   async function loadAll() {
@@ -82,6 +96,15 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.jobId]);
 
+  useEffect(() => {
+    if (!job || !["queued", "running"].includes(job.status)) return;
+    const timer = window.setInterval(() => {
+      void loadAll();
+    }, 3000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.status, params.jobId]);
+
   async function handleRun() {
     setRunning(true);
     setError("");
@@ -92,6 +115,32 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
       setError(err instanceof Error ? err.message : "Failed to run evaluation job.");
     } finally {
       setRunning(false);
+    }
+  }
+
+  async function handleQueue() {
+    setQueueing(true);
+    setError("");
+    try {
+      await queueJob(params.jobId);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to queue evaluation job.");
+    } finally {
+      setQueueing(false);
+    }
+  }
+
+  async function handleProcessQueue() {
+    setProcessingQueue(true);
+    setError("");
+    try {
+      await processQueue(1);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to process queued jobs.");
+    } finally {
+      setProcessingQueue(false);
     }
   }
 
@@ -113,9 +162,24 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
           <button className="btn btn-secondary" onClick={() => void loadAll()} type="button">
             Refresh
           </button>
-          {canRun && (
+          {canRunNow && (
             <button className="btn btn-primary" disabled={running} onClick={() => void handleRun()} type="button">
               {running ? "Running..." : "Run Evaluation"}
+            </button>
+          )}
+          {canQueue && (
+            <button className="btn btn-secondary" disabled={queueing} onClick={() => void handleQueue()} type="button">
+              {queueing ? "Queueing..." : "Queue Job"}
+            </button>
+          )}
+          {canProcessQueue && (
+            <button
+              className="btn btn-primary"
+              disabled={processingQueue}
+              onClick={() => void handleProcessQueue()}
+              type="button"
+            >
+              {processingQueue ? "Processing..." : "Process Queue"}
             </button>
           )}
           <Link className="btn btn-secondary" href="/jobs">
@@ -133,6 +197,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
             <div className="btn-row">
               <span className={statusClass(job.status)}>{job.status}</span>
               {job.linked_run_id && <span className="pill">run: {job.linked_run_id}</span>}
+              {["queued", "running"].includes(job.status) && <span className="pill">auto-refresh 3s</span>}
             </div>
             <div className="form-grid">
               <div>
