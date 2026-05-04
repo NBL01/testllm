@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createJob } from "@/lib/api";
+import { createJob, getJobOptions } from "@/lib/api";
+import type { JobOptionsResponse } from "@/lib/types";
 
 type JobFormState = {
   input_path: string;
@@ -46,8 +47,53 @@ const defaultState: JobFormState = {
 export default function NewJobPage() {
   const router = useRouter();
   const [state, setState] = useState<JobFormState>(defaultState);
+  const [options, setOptions] = useState<JobOptionsResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [loadingOptions, setLoadingOptions] = useState(true);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function loadOptions() {
+      setLoadingOptions(true);
+      try {
+        const loaded = await getJobOptions();
+        setOptions(loaded);
+        setState((prev) => {
+          const fallbackProvider = (loaded.providers[0] as JobFormState["provider"] | undefined) || prev.provider;
+          const provider = loaded.providers.includes(prev.provider) ? prev.provider : fallbackProvider;
+          const providerModels = loaded.models_by_provider[provider] || [];
+          const modelName = providerModels.includes(prev.model_name) ? prev.model_name : (providerModels[0] || prev.model_name);
+          const fallbackMode =
+            (loaded.evaluation_modes[0] as JobFormState["evaluation_mode"] | undefined) || prev.evaluation_mode;
+          const evaluationMode = loaded.evaluation_modes.includes(prev.evaluation_mode)
+            ? prev.evaluation_mode
+            : fallbackMode;
+          const oracleProfile = loaded.oracle_profiles.includes(prev.oracle_profile)
+            ? prev.oracle_profile
+            : (loaded.oracle_profiles[0] || prev.oracle_profile);
+          const inputPath = loaded.dataset_paths.includes(prev.input_path)
+            ? prev.input_path
+            : (loaded.dataset_paths[0] || prev.input_path);
+          const datasetVersion = prev.dataset_version.trim() ? prev.dataset_version : "";
+          return {
+            ...prev,
+            provider,
+            model_name: modelName,
+            evaluation_mode: evaluationMode,
+            oracle_profile: oracleProfile,
+            input_path: inputPath,
+            dataset_version: datasetVersion
+          };
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load job options.");
+      } finally {
+        setLoadingOptions(false);
+      }
+    }
+
+    void loadOptions();
+  }, []);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -81,35 +127,55 @@ export default function NewJobPage() {
       </section>
 
       <form className="panel grid" onSubmit={onSubmit}>
+        {loadingOptions && <p className="meta">Loading provider/model/dataset options...</p>}
         <div className="form-grid">
           <label>
             Dataset path
             <input
               className="input"
+              list="dataset-path-options"
               value={state.input_path}
               onChange={(event) => setState((prev) => ({ ...prev, input_path: event.target.value }))}
             />
+            <datalist id="dataset-path-options">
+              {(options?.dataset_paths || []).map((item) => (
+                <option key={item} value={item} />
+              ))}
+            </datalist>
           </label>
           <label>
             Provider
             <select
               value={state.provider}
-              onChange={(event) =>
-                setState((prev) => ({ ...prev, provider: event.target.value as JobFormState["provider"] }))
-              }
+              onChange={(event) => {
+                const provider = event.target.value as JobFormState["provider"];
+                setState((prev) => {
+                  const models = options?.models_by_provider[provider] || [];
+                  const resolvedModel = models.includes(prev.model_name) ? prev.model_name : (models[0] || prev.model_name);
+                  return { ...prev, provider, model_name: resolvedModel };
+                });
+              }}
             >
-              <option value="mock">mock</option>
-              <option value="ollama">ollama</option>
-              <option value="local">local</option>
+              {(options?.providers || ["mock", "ollama", "local"]).map((provider) => (
+                <option key={provider} value={provider}>
+                  {provider}
+                </option>
+              ))}
             </select>
           </label>
           <label>
             Model name
             <input
               className="input"
+              list="model-name-options"
               value={state.model_name}
               onChange={(event) => setState((prev) => ({ ...prev, model_name: event.target.value }))}
             />
+            <datalist id="model-name-options">
+              {(options?.models_by_provider[state.provider] || []).map((model) => (
+                <option key={model} value={model} />
+              ))}
+            </datalist>
           </label>
           <label>
             Evaluation mode
@@ -122,27 +188,42 @@ export default function NewJobPage() {
                 }))
               }
             >
-              <option value="regression">regression</option>
-              <option value="exploratory">exploratory</option>
-              <option value="adversarial">adversarial</option>
-              <option value="trace_replay">trace_replay</option>
+              {(options?.evaluation_modes || ["regression", "exploratory", "adversarial", "trace_replay"]).map(
+                (mode) => (
+                  <option key={mode} value={mode}>
+                    {mode}
+                  </option>
+                )
+              )}
             </select>
           </label>
           <label>
             Oracle profile
             <input
               className="input"
+              list="oracle-profile-options"
               value={state.oracle_profile}
               onChange={(event) => setState((prev) => ({ ...prev, oracle_profile: event.target.value }))}
             />
+            <datalist id="oracle-profile-options">
+              {(options?.oracle_profiles || []).map((item) => (
+                <option key={item} value={item} />
+              ))}
+            </datalist>
           </label>
           <label>
             Dataset version (optional)
             <input
               className="input"
+              list="dataset-version-options"
               value={state.dataset_version}
               onChange={(event) => setState((prev) => ({ ...prev, dataset_version: event.target.value }))}
             />
+            <datalist id="dataset-version-options">
+              {(options?.dataset_versions || []).map((item) => (
+                <option key={item} value={item} />
+              ))}
+            </datalist>
           </label>
           <label>
             Repeat count

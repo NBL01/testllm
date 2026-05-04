@@ -50,6 +50,10 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     queue_job,
     run_job,
 )
+from llm_reliability_analytics.workflow.evaluation_job_options import (
+    EvaluationJobOptionsResponse,
+    get_evaluation_job_options,
+)
 from llm_reliability_analytics.workflow.service import (
     RunNotFoundError,
     load_cases_to_storage,
@@ -301,6 +305,11 @@ def list_evaluation_jobs_endpoint(
 ) -> EvaluationJobListResponse:
     items = list_jobs(limit=limit, status=status)
     return EvaluationJobListResponse(total=len(items), items=items)
+
+
+@router.get("/evaluation-jobs/options", response_model=EvaluationJobOptionsResponse)
+def evaluation_job_options_endpoint() -> EvaluationJobOptionsResponse:
+    return get_evaluation_job_options()
 
 
 @router.get("/evaluation-jobs/{job_id}", response_model=EvaluationJob)

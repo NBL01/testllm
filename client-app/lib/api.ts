@@ -2,6 +2,7 @@ import type {
   EvaluationJob,
   EvaluationJobListResponse,
   FailedCasesResponse,
+  JobOptionsResponse,
   JobReportPayload,
   JobRunResult,
   JobSummaryResult,
@@ -43,6 +44,10 @@ async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Pro
 
 export function listJobs(): Promise<EvaluationJobListResponse> {
   return apiRequest<EvaluationJobListResponse>("/evaluation-jobs");
+}
+
+export function getJobOptions(): Promise<JobOptionsResponse> {
+  return apiRequest<JobOptionsResponse>("/evaluation-jobs/options");
 }
 
 export function createJob(payload: Record<string, unknown>): Promise<EvaluationJob> {

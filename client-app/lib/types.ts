@@ -124,3 +124,13 @@ export type JobReportPayload = {
   storage_summary: Record<string, unknown>;
   report: Record<string, unknown>;
 };
+
+export type JobOptionsResponse = {
+  providers: string[];
+  models_by_provider: Record<string, string[]>;
+  dataset_paths: string[];
+  dataset_versions: string[];
+  oracle_profiles: string[];
+  oracle_types: string[];
+  evaluation_modes: string[];
+};
