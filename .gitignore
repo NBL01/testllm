@@ -7,3 +7,6 @@ data/*
 !data/raw/llm_eval_dataset_v2_300.jsonl
 !data/raw/llm_eval_dataset_v2_300.parquet
 data/*.duckdb
+client-app/node_modules/
+client-app/.next/
+client-app/.turbo/

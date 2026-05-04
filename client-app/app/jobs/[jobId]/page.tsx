@@ -1,0 +1,290 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import {
+  getJob,
+  getJobFailedCases,
+  getJobReport,
+  getJobSummary,
+  getJobTraces,
+  runJob
+} from "@/lib/api";
+import type {
+  EvaluationJob,
+  FailedCase,
+  JobReportPayload,
+  JobSummaryResult,
+  TraceRecord
+} from "@/lib/types";
+
+function statusClass(status: string): string {
+  if (status === "running") return "pill status-running";
+  if (status === "completed") return "pill status-completed";
+  if (status === "failed") return "pill status-failed";
+  return "pill";
+}
+
+function asPct(value: number | undefined): string {
+  if (typeof value !== "number") return "n/a";
+  return `${(value * 100).toFixed(2)}%`;
+}
+
+export default function JobDetailPage({ params }: { params: { jobId: string } }) {
+  const [job, setJob] = useState<EvaluationJob | null>(null);
+  const [summary, setSummary] = useState<JobSummaryResult | null>(null);
+  const [failedCases, setFailedCases] = useState<FailedCase[]>([]);
+  const [traces, setTraces] = useState<TraceRecord[]>([]);
+  const [report, setReport] = useState<JobReportPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
+
+  const canRun = useMemo(() => {
+    if (!job) return false;
+    return job.status === "draft" && !job.linked_run_id;
+  }, [job]);
+
+  async function loadAll() {
+    setLoading(true);
+    setError("");
+    try {
+      const loadedJob = await getJob(params.jobId);
+      setJob(loadedJob);
+
+      if (loadedJob.linked_run_id) {
+        const [summaryData, failedData, tracesData, reportData] = await Promise.all([
+          getJobSummary(params.jobId),
+          getJobFailedCases(params.jobId, 100),
+          getJobTraces(params.jobId, 100),
+          getJobReport(params.jobId)
+        ]);
+        setSummary(summaryData);
+        setFailedCases(failedData.items);
+        setTraces(tracesData.items);
+        setReport(reportData);
+      } else {
+        setSummary(null);
+        setFailedCases([]);
+        setTraces([]);
+        setReport(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load job details.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.jobId]);
+
+  async function handleRun() {
+    setRunning(true);
+    setError("");
+    try {
+      await runJob(params.jobId);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to run evaluation job.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function copyReport() {
+    if (!report?.markdown_report) return;
+    await navigator.clipboard.writeText(report.markdown_report);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  }
+
+  return (
+    <main className="page">
+      <section className="hero">
+        <div>
+          <h1>Evaluation Job Detail</h1>
+          <p>Job ID: <code>{params.jobId}</code></p>
+        </div>
+        <div className="btn-row">
+          <button className="btn btn-secondary" onClick={() => void loadAll()} type="button">
+            Refresh
+          </button>
+          {canRun && (
+            <button className="btn btn-primary" disabled={running} onClick={() => void handleRun()} type="button">
+              {running ? "Running..." : "Run Evaluation"}
+            </button>
+          )}
+          <Link className="btn btn-secondary" href="/jobs">
+            Back to Jobs
+          </Link>
+        </div>
+      </section>
+
+      {loading && <p className="meta">Loading job detail...</p>}
+      {error && <p className="error">{error}</p>}
+
+      {job && !loading && (
+        <div className="grid">
+          <section className="panel grid">
+            <div className="btn-row">
+              <span className={statusClass(job.status)}>{job.status}</span>
+              {job.linked_run_id && <span className="pill">run: {job.linked_run_id}</span>}
+            </div>
+            <div className="form-grid">
+              <div>
+                <strong>Provider / model</strong>
+                <div className="meta">
+                  {job.provider} / <code>{job.model_name}</code>
+                </div>
+              </div>
+              <div>
+                <strong>Dataset / mode</strong>
+                <div className="meta">
+                  {job.dataset_version || "auto"} / {job.evaluation_mode}
+                </div>
+              </div>
+              <div>
+                <strong>Oracle profile</strong>
+                <div className="meta">{job.oracle_profile}</div>
+              </div>
+              <div>
+                <strong>Submitted by</strong>
+                <div className="meta">{job.submitted_by || "n/a"}</div>
+              </div>
+              <div>
+                <strong>Team / client</strong>
+                <div className="meta">
+                  {job.team_name || "n/a"} / {job.client_name || "n/a"}
+                </div>
+              </div>
+              <div>
+                <strong>Project</strong>
+                <div className="meta">{job.project_name || "n/a"}</div>
+              </div>
+            </div>
+            {job.failure_reason && <p className="error">Failure reason: {job.failure_reason}</p>}
+          </section>
+
+          {summary && (
+            <section className="panel">
+              <h2>Summary Metrics</h2>
+              <div className="form-grid">
+                <div>
+                  <strong>Total</strong>
+                  <div>{summary.report.total_test_cases}</div>
+                </div>
+                <div>
+                  <strong>Passed</strong>
+                  <div>{summary.report.passed}</div>
+                </div>
+                <div>
+                  <strong>Failed</strong>
+                  <div>{summary.report.failed}</div>
+                </div>
+                <div>
+                  <strong>Accuracy</strong>
+                  <div>{asPct(summary.report.accuracy)}</div>
+                </div>
+                <div>
+                  <strong>Avg latency</strong>
+                  <div>{summary.report.average_latency_ms.toFixed(2)} ms</div>
+                </div>
+                <div>
+                  <strong>Reliability score</strong>
+                  <div>{summary.report.overall_reliability_score.toFixed(3)}</div>
+                </div>
+              </div>
+            </section>
+          )}
+
+          <section className="panel">
+            <h2>Failed Cases ({failedCases.length})</h2>
+            {failedCases.length === 0 ? (
+              <p className="meta">No failed cases found for this job.</p>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Case</th>
+                      <th>Category</th>
+                      <th>Score</th>
+                      <th>Error</th>
+                      <th>Explanation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {failedCases.map((item) => (
+                      <tr key={`${item.test_case_id}:${item.attempt_index}`}>
+                        <td>
+                          <code>{item.test_case_id}</code>
+                          <div className="meta">attempt {item.attempt_index}</div>
+                        </td>
+                        <td>{item.category || "n/a"}</td>
+                        <td>{item.score.toFixed(3)}</td>
+                        <td>{item.error_type || "n/a"}</td>
+                        <td>{item.explanation || "n/a"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="panel">
+            <h2>Oracle Traces ({traces.length})</h2>
+            {traces.length === 0 ? (
+              <p className="meta">No traces available yet.</p>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Trace</th>
+                      <th>Prompt</th>
+                      <th>Output</th>
+                      <th>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {traces.slice(0, 20).map((trace) => (
+                      <tr key={trace.trace_id}>
+                        <td>
+                          <code>{trace.trace_id}</code>
+                        </td>
+                        <td>{trace.prompt || "n/a"}</td>
+                        <td>{trace.raw_output || "n/a"}</td>
+                        <td>{trace.error_type || "n/a"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="panel">
+            <h2>Simple Report Export</h2>
+            {report?.markdown_report ? (
+              <>
+                <div className="btn-row" style={{ marginBottom: "0.8rem" }}>
+                  <button className="btn btn-primary" onClick={() => void copyReport()} type="button">
+                    {copied ? "Copied" : "Copy Markdown Report"}
+                  </button>
+                </div>
+                <pre>{report.markdown_report}</pre>
+              </>
+            ) : (
+              <p className="meta">Report will be available after job completion.</p>
+            )}
+          </section>
+        </div>
+      )}
+    </main>
+  );
+}

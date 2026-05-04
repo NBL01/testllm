@@ -129,6 +129,20 @@ Open docs:
 streamlit run frontend/streamlit_app.py
 ```
 
+## Running Client-Facing Next.js MVP
+
+```bash
+cd client-app
+npm install
+npm run dev
+```
+
+Optional API base URL:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm run dev
+```
+
 ## Running Evaluations with a Selected Local Model
 
 ### Frontend flow
@@ -204,6 +218,14 @@ python scripts/run_batch.py \
 - `GET /candidates`
 - `POST /candidates/{candidate_id}/status`
 - `GET /candidates/{candidate_id}/events`
+- `POST /evaluation-jobs`
+- `GET /evaluation-jobs`
+- `GET /evaluation-jobs/{job_id}`
+- `POST /evaluation-jobs/{job_id}/run`
+- `GET /evaluation-jobs/{job_id}/summary`
+- `GET /evaluation-jobs/{job_id}/failed-cases`
+- `GET /evaluation-jobs/{job_id}/traces`
+- `GET /evaluation-jobs/{job_id}/report`
 
 ## V2 Scope and Roadmap
 
