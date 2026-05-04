@@ -173,6 +173,20 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     setTimeout(() => setCopied(false), 1200);
   }
 
+  function downloadReport() {
+    if (!report?.markdown_report) return;
+    const blob = new Blob([report.markdown_report], { type: "text/markdown;charset=utf-8" });
+    const link = document.createElement("a");
+    const objectUrl = URL.createObjectURL(blob);
+    const runLabel = report.run_id || params.jobId;
+    link.href = objectUrl;
+    link.download = `evaluation-report-${runLabel}.md`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
+  }
+
   return (
     <main className="page">
       <section className="hero">
@@ -367,6 +381,9 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                 <div className="btn-row" style={{ marginBottom: "0.8rem" }}>
                   <button className="btn btn-primary" onClick={() => void copyReport()} type="button">
                     {copied ? "Copied" : "Copy Markdown Report"}
+                  </button>
+                  <button className="btn btn-secondary" onClick={downloadReport} type="button">
+                    Download .md
                   </button>
                 </div>
                 <pre>{report.markdown_report}</pre>

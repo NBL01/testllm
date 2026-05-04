@@ -257,3 +257,53 @@ def test_evaluation_job_cancel_from_draft_and_queue_blocked(monkeypatch, tmp_pat
     assert stats_response.status_code == 200
     stats_payload = stats_response.json()
     assert stats_payload["by_status"]["canceled"] == 1
+
+
+def test_evaluation_job_list_can_filter_by_status(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_filter.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    first_create = client.post(
+        "/evaluation-jobs",
+        json={
+            "input_path": "sample_test_cases.jsonl",
+            "provider": "mock",
+            "model_name": "mock-baseline",
+            "evaluation_mode": "regression",
+            "oracle_profile": "default",
+            "repeat_count": 1,
+            "limit": 1,
+        },
+    )
+    second_create = client.post(
+        "/evaluation-jobs",
+        json={
+            "input_path": "sample_test_cases.jsonl",
+            "provider": "mock",
+            "model_name": "mock-baseline",
+            "evaluation_mode": "regression",
+            "oracle_profile": "default",
+            "repeat_count": 1,
+            "limit": 1,
+        },
+    )
+    assert first_create.status_code == 201
+    assert second_create.status_code == 201
+    job_id_to_queue = first_create.json()["job_id"]
+
+    queue_response = client.post(f"/evaluation-jobs/{job_id_to_queue}/queue")
+    assert queue_response.status_code == 200
+
+    queued_only_response = client.get("/evaluation-jobs?status=queued")
+    assert queued_only_response.status_code == 200
+    queued_payload = queued_only_response.json()
+    assert queued_payload["total"] == 1
+    assert queued_payload["items"][0]["job_id"] == job_id_to_queue
+    assert queued_payload["items"][0]["status"] == "queued"
+
+    draft_only_response = client.get("/evaluation-jobs?status=draft")
+    assert draft_only_response.status_code == 200
+    draft_payload = draft_only_response.json()
+    assert draft_payload["total"] == 1
+    assert draft_payload["items"][0]["status"] == "draft"

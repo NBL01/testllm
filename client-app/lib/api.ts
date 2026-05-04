@@ -42,8 +42,16 @@ async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Pro
   return (await response.json()) as T;
 }
 
-export function listJobs(): Promise<EvaluationJobListResponse> {
-  return apiRequest<EvaluationJobListResponse>("/evaluation-jobs");
+export function listJobs(params?: { status?: string; limit?: number }): Promise<EvaluationJobListResponse> {
+  const query = new URLSearchParams();
+  if (params?.status && params.status !== "all") {
+    query.set("status", params.status);
+  }
+  if (typeof params?.limit === "number" && params.limit > 0) {
+    query.set("limit", String(params.limit));
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return apiRequest<EvaluationJobListResponse>(`/evaluation-jobs${suffix}`);
 }
 
 export function getJobOptions(): Promise<JobOptionsResponse> {

@@ -16,6 +16,7 @@ function statusClass(status: string): string {
 export default function JobsPage() {
   const [jobs, setJobs] = useState<EvaluationJob[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStatsResult | null>(null);
+  const [statusFilter, setStatusFilter] = useState("all");
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
@@ -24,7 +25,7 @@ export default function JobsPage() {
     setLoading(true);
     setError("");
     try {
-      const [response, stats] = await Promise.all([listJobs(), getQueueStats()]);
+      const [response, stats] = await Promise.all([listJobs({ status: statusFilter, limit: 300 }), getQueueStats()]);
       setJobs(response.items);
       setQueueStats(stats);
     } catch (err) {
@@ -49,7 +50,7 @@ export default function JobsPage() {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [statusFilter]);
 
   return (
     <main className="page">
@@ -72,6 +73,20 @@ export default function JobsPage() {
       </section>
 
       <section className="panel">
+        <div className="btn-row" style={{ marginBottom: "0.8rem" }}>
+          <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+            Status filter
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+              <option value="all">all</option>
+              <option value="draft">draft</option>
+              <option value="queued">queued</option>
+              <option value="running">running</option>
+              <option value="completed">completed</option>
+              <option value="failed">failed</option>
+              <option value="canceled">canceled</option>
+            </select>
+          </label>
+        </div>
         {queueStats && (
           <p className="meta">
             Queue total: {queueStats.total} | queued: {queueStats.by_status.queued} | running:{" "}
