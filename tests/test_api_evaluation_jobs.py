@@ -213,3 +213,47 @@ def test_evaluation_job_queue_stats_and_empty_processor(monkeypatch, tmp_path) -
     assert process_stats_payload["total"] == 1
     assert process_stats_payload["by_status"]["queued"] == 0
     assert process_stats_payload["by_status"]["completed"] == 1
+
+
+def test_evaluation_job_cancel_from_draft_and_queue_blocked(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_cancel.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/evaluation-jobs",
+        json={
+            "input_path": "sample_test_cases.jsonl",
+            "provider": "mock",
+            "model_name": "mock-baseline",
+            "evaluation_mode": "regression",
+            "oracle_profile": "default",
+            "repeat_count": 1,
+            "limit": 1,
+        },
+    )
+    assert create_response.status_code == 201
+    job_id = create_response.json()["job_id"]
+
+    cancel_response = client.post(
+        f"/evaluation-jobs/{job_id}/cancel",
+        json={"reason": "dataset selected by mistake"},
+    )
+    assert cancel_response.status_code == 200
+    cancel_payload = cancel_response.json()
+    assert cancel_payload["status"] == "canceled"
+    assert "dataset selected by mistake" in (cancel_payload["failure_reason"] or "")
+
+    queue_response = client.post(f"/evaluation-jobs/{job_id}/queue")
+    assert queue_response.status_code == 400
+    assert "cannot be queued" in queue_response.json()["detail"]
+
+    process_response = client.post("/evaluation-jobs/process-queue?max_jobs=5")
+    assert process_response.status_code == 200
+    process_payload = process_response.json()
+    assert process_payload["processed_count"] == 0
+
+    stats_response = client.get("/evaluation-jobs/queue/stats")
+    assert stats_response.status_code == 200
+    stats_payload = stats_response.json()
+    assert stats_payload["by_status"]["canceled"] == 1

@@ -166,6 +166,11 @@ label {
   color: var(--danger);
 }
 
+.status-canceled {
+  background: #f5efe3;
+  color: #8a5a08;
+}
+
 .table-wrap {
   overflow-x: auto;
 }

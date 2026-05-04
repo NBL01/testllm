@@ -61,6 +61,13 @@ export function queueJob(jobId: string): Promise<EvaluationJob> {
   return apiRequest<EvaluationJob>(`/evaluation-jobs/${jobId}/queue`, { method: "POST" });
 }
 
+export function cancelJob(jobId: string, reason = ""): Promise<EvaluationJob> {
+  return apiRequest<EvaluationJob>(`/evaluation-jobs/${jobId}/cancel`, {
+    method: "POST",
+    body: { reason }
+  });
+}
+
 export function processQueue(maxJobs = 10): Promise<QueueProcessResult> {
   return apiRequest<QueueProcessResult>(`/evaluation-jobs/process-queue?max_jobs=${maxJobs}`, {
     method: "POST"

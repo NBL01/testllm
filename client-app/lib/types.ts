@@ -1,4 +1,4 @@
-export type JobStatus = "draft" | "queued" | "running" | "completed" | "failed";
+export type JobStatus = "draft" | "queued" | "running" | "completed" | "failed" | "canceled";
 
 export type EvaluationJob = {
   job_id: string;
@@ -57,6 +57,7 @@ export type QueueStatsResult = {
     running: number;
     completed: number;
     failed: number;
+    canceled: number;
   };
 };
 

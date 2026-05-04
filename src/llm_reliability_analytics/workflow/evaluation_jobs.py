@@ -45,6 +45,10 @@ class EvaluationJobQueueStatsResult(BaseModel):
     by_status: dict[str, int]
 
 
+class EvaluationJobCancelRequest(BaseModel):
+    reason: str = ""
+
+
 class EvaluationJobSummaryResult(BaseModel):
     job: EvaluationJob
     storage_summary: RunAggregatedSummary
@@ -84,7 +88,7 @@ def create_job(payload: EvaluationJobCreate) -> EvaluationJob:
 
 def list_jobs(limit: int = 100, status: EvaluationJobStatus | None = None) -> list[EvaluationJob]:
     normalized_status = status.strip() if isinstance(status, str) else None
-    if normalized_status not in {"draft", "queued", "running", "completed", "failed"}:
+    if normalized_status not in {"draft", "queued", "running", "completed", "failed", "canceled"}:
         normalized_status = None
     return list_evaluation_jobs(limit=limit, status=cast(EvaluationJobStatus | None, normalized_status))
 
@@ -103,6 +107,8 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
 
     if job.status == "running":
         raise ValueError(f"Evaluation job is already running: {job_id}")
+    if job.status == "canceled":
+        raise ValueError(f"Evaluation job is canceled: {job_id}")
     if job.linked_run_id:
         raise ValueError(f"Evaluation job already executed: {job_id}")
 
@@ -163,7 +169,7 @@ def queue_job(job_id: str) -> EvaluationJob:
     job = get_job(job_id)
     if job.linked_run_id:
         raise ValueError(f"Evaluation job cannot be queued after execution: {job_id}")
-    if job.status in {"running", "completed", "failed"}:
+    if job.status in {"running", "completed", "failed", "canceled"}:
         raise ValueError(f"Evaluation job cannot be queued from status={job.status}: {job_id}")
     if job.status == "queued":
         return job
@@ -190,6 +196,27 @@ def queue_stats() -> EvaluationJobQueueStatsResult:
     counts = evaluation_job_status_counts()
     total = sum(counts.values())
     return EvaluationJobQueueStatsResult(total=total, by_status=counts)
+
+
+def cancel_job(job_id: str, reason: str = "") -> EvaluationJob:
+    job = get_job(job_id)
+    if job.status in {"completed", "failed"} or job.linked_run_id:
+        raise ValueError(f"Evaluation job cannot be canceled from status={job.status}: {job_id}")
+    if job.status == "running":
+        raise ValueError(f"Evaluation job running; stop worker first: {job_id}")
+    if job.status == "canceled":
+        return job
+
+    cancel_reason = reason.strip() or "Canceled by user."
+    canceled = update_evaluation_job(
+        job_id,
+        status="canceled",
+        failure_reason=cancel_reason[:1000],
+        completed_at=datetime.now(timezone.utc),
+    )
+    if canceled is None:
+        raise EvaluationJobNotFoundError(f"Evaluation job not found after cancel update: {job_id}")
+    return canceled
 
 
 def get_job_summary(job_id: str) -> EvaluationJobSummaryResult:

@@ -9,6 +9,7 @@ function statusClass(status: string): string {
   if (status === "running") return "pill status-running";
   if (status === "completed") return "pill status-completed";
   if (status === "failed") return "pill status-failed";
+  if (status === "canceled") return "pill status-canceled";
   return "pill";
 }
 
@@ -74,7 +75,9 @@ export default function JobsPage() {
         {queueStats && (
           <p className="meta">
             Queue total: {queueStats.total} | queued: {queueStats.by_status.queued} | running:{" "}
-            {queueStats.by_status.running} | draft: {queueStats.by_status.draft}
+            {queueStats.by_status.running} | draft: {queueStats.by_status.draft} | completed:{" "}
+            {queueStats.by_status.completed} | failed: {queueStats.by_status.failed} | canceled:{" "}
+            {queueStats.by_status.canceled}
           </p>
         )}
         {loading && <p className="meta">Loading jobs...</p>}

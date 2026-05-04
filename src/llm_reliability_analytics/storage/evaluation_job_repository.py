@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from llm_reliability_analytics.storage.db import get_connection, initialize_schema
 
-EvaluationJobStatus = Literal["draft", "queued", "running", "completed", "failed"]
+EvaluationJobStatus = Literal["draft", "queued", "running", "completed", "failed", "canceled"]
 
 
 class EvaluationJob(BaseModel):
@@ -329,6 +329,7 @@ def evaluation_job_status_counts() -> dict[str, int]:
         "running": 0,
         "completed": 0,
         "failed": 0,
+        "canceled": 0,
     }
     for status, status_count in rows:
         normalized = str(status or "").strip().lower()

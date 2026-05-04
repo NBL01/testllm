@@ -229,6 +229,7 @@ python scripts/run_batch.py \
 - `GET /evaluation-jobs/{job_id}`
 - `POST /evaluation-jobs/{job_id}/run`
 - `POST /evaluation-jobs/{job_id}/queue`
+- `POST /evaluation-jobs/{job_id}/cancel`
 - `POST /evaluation-jobs/process-queue`
 - `GET /evaluation-jobs/queue/stats`
 - `GET /evaluation-jobs/{job_id}/summary`

@@ -29,6 +29,7 @@ from llm_reliability_analytics.storage.duckdb_store import RunAggregatedSummary
 from llm_reliability_analytics.test_authoring.models import CandidateStatus, CandidateTestCase
 from llm_reliability_analytics.test_authoring.service import CandidateAuthoringService
 from llm_reliability_analytics.workflow.evaluation_jobs import (
+    EvaluationJobCancelRequest,
     EvaluationJobFailedCase,
     EvaluationJobNotFoundError,
     EvaluationJobQueueProcessResult,
@@ -44,6 +45,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     get_job_traces,
     list_jobs,
     process_queued_jobs,
+    cancel_job,
     queue_stats,
     queue_job,
     run_job,
@@ -355,6 +357,19 @@ def process_evaluation_jobs_queue_endpoint(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/evaluation-jobs/{job_id}/cancel", response_model=EvaluationJob)
+def cancel_evaluation_job_endpoint(
+    job_id: str,
+    request: EvaluationJobCancelRequest,
+) -> EvaluationJob:
+    try:
+        return cancel_job(job_id=job_id, reason=request.reason)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/evaluation-jobs/queue/stats", response_model=EvaluationJobQueueStatsResult)

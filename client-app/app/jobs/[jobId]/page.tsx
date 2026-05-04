@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  cancelJob,
   getJob,
   getJobFailedCases,
   getJobReport,
@@ -24,6 +25,7 @@ function statusClass(status: string): string {
   if (status === "running") return "pill status-running";
   if (status === "completed") return "pill status-completed";
   if (status === "failed") return "pill status-failed";
+  if (status === "canceled") return "pill status-canceled";
   return "pill";
 }
 
@@ -41,6 +43,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [queueing, setQueueing] = useState(false);
+  const [canceling, setCanceling] = useState(false);
   const [processingQueue, setProcessingQueue] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
@@ -58,6 +61,11 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   const canProcessQueue = useMemo(() => {
     if (!job) return false;
     return job.status === "queued" && !job.linked_run_id;
+  }, [job]);
+
+  const canCancel = useMemo(() => {
+    if (!job) return false;
+    return ["draft", "queued"].includes(job.status) && !job.linked_run_id;
   }, [job]);
 
   async function loadAll() {
@@ -144,6 +152,20 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     }
   }
 
+  async function handleCancel() {
+    const reason = window.prompt("Optional cancel reason", "Canceled by user.") || "";
+    setCanceling(true);
+    setError("");
+    try {
+      await cancelJob(params.jobId, reason);
+      await loadAll();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel evaluation job.");
+    } finally {
+      setCanceling(false);
+    }
+  }
+
   async function copyReport() {
     if (!report?.markdown_report) return;
     await navigator.clipboard.writeText(report.markdown_report);
@@ -180,6 +202,11 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
               type="button"
             >
               {processingQueue ? "Processing..." : "Process Queue"}
+            </button>
+          )}
+          {canCancel && (
+            <button className="btn btn-secondary" disabled={canceling} onClick={() => void handleCancel()} type="button">
+              {canceling ? "Canceling..." : "Cancel Job"}
             </button>
           )}
           <Link className="btn btn-secondary" href="/jobs">
