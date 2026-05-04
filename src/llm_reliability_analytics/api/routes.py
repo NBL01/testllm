@@ -32,6 +32,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     EvaluationJobFailedCase,
     EvaluationJobNotFoundError,
     EvaluationJobQueueProcessResult,
+    EvaluationJobQueueStatsResult,
     EvaluationJobReportPayload,
     EvaluationJobRunResult,
     EvaluationJobSummaryResult,
@@ -43,6 +44,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     get_job_traces,
     list_jobs,
     process_queued_jobs,
+    queue_stats,
     queue_job,
     run_job,
 )
@@ -353,6 +355,11 @@ def process_evaluation_jobs_queue_endpoint(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/evaluation-jobs/queue/stats", response_model=EvaluationJobQueueStatsResult)
+def evaluation_jobs_queue_stats_endpoint() -> EvaluationJobQueueStatsResult:
+    return queue_stats()
 
 
 @router.get("/evaluation-jobs/{job_id}/summary", response_model=EvaluationJobSummaryResult)

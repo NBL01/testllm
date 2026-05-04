@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listJobs } from "@/lib/api";
-import type { EvaluationJob } from "@/lib/types";
+import { getQueueStats, listJobs, processQueue } from "@/lib/api";
+import type { EvaluationJob, QueueStatsResult } from "@/lib/types";
 
 function statusClass(status: string): string {
   if (status === "running") return "pill status-running";
@@ -14,19 +14,35 @@ function statusClass(status: string): string {
 
 export default function JobsPage() {
   const [jobs, setJobs] = useState<EvaluationJob[]>([]);
+  const [queueStats, setQueueStats] = useState<QueueStatsResult | null>(null);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      const response = await listJobs();
+      const [response, stats] = await Promise.all([listJobs(), getQueueStats()]);
       setJobs(response.items);
+      setQueueStats(stats);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load jobs.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleProcessQueue() {
+    setProcessing(true);
+    setError("");
+    try {
+      await processQueue(10);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to process queue.");
+    } finally {
+      setProcessing(false);
     }
   }
 
@@ -45,6 +61,9 @@ export default function JobsPage() {
           <button className="btn btn-secondary" onClick={() => void load()} type="button">
             Refresh
           </button>
+          <button className="btn btn-primary" onClick={() => void handleProcessQueue()} disabled={processing} type="button">
+            {processing ? "Processing Queue..." : "Process Queue"}
+          </button>
           <Link className="btn btn-primary" href="/jobs/new">
             New Job
           </Link>
@@ -52,6 +71,12 @@ export default function JobsPage() {
       </section>
 
       <section className="panel">
+        {queueStats && (
+          <p className="meta">
+            Queue total: {queueStats.total} | queued: {queueStats.by_status.queued} | running:{" "}
+            {queueStats.by_status.running} | draft: {queueStats.by_status.draft}
+          </p>
+        )}
         {loading && <p className="meta">Loading jobs...</p>}
         {error && <p className="error">{error}</p>}
         {!loading && !error && jobs.length === 0 && <p className="meta">No jobs found yet.</p>}

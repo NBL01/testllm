@@ -180,6 +180,12 @@ Common options:
 - `--run-name local-ollama-baseline`
 - `--evaluation-mode regression|exploratory|adversarial|trace_replay`
 
+Queue processor CLI:
+```bash
+python -m llm_reliability_analytics.cli.process_queue --max-jobs 10
+python -m llm_reliability_analytics.cli.process_queue --max-jobs 5 --poll-interval-seconds 3 --iterations 20
+```
+
 ## Hybrid Evaluation Workflow
 
 1. Run a normal regression/adversarial batch.
@@ -224,6 +230,7 @@ python scripts/run_batch.py \
 - `POST /evaluation-jobs/{job_id}/run`
 - `POST /evaluation-jobs/{job_id}/queue`
 - `POST /evaluation-jobs/process-queue`
+- `GET /evaluation-jobs/queue/stats`
 - `GET /evaluation-jobs/{job_id}/summary`
 - `GET /evaluation-jobs/{job_id}/failed-cases`
 - `GET /evaluation-jobs/{job_id}/traces`

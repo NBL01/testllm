@@ -311,6 +311,32 @@ def update_evaluation_job(
     return get_evaluation_job(job_id)
 
 
+def evaluation_job_status_counts() -> dict[str, int]:
+    initialize_schema()
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT status, COUNT(*) AS status_count
+        FROM evaluation_jobs
+        GROUP BY status
+        ORDER BY status;
+        """
+    ).fetchall()
+    conn.close()
+    counts = {
+        "draft": 0,
+        "queued": 0,
+        "running": 0,
+        "completed": 0,
+        "failed": 0,
+    }
+    for status, status_count in rows:
+        normalized = str(status or "").strip().lower()
+        if normalized in counts:
+            counts[normalized] = int(status_count or 0)
+    return counts
+
+
 def _row_to_job(row: tuple) -> EvaluationJob:
     return EvaluationJob(
         job_id=row[0],

@@ -156,3 +156,60 @@ def test_evaluation_job_queue_and_process(monkeypatch, tmp_path) -> None:
     requeue_response = client.post(f"/evaluation-jobs/{job_id}/queue")
     assert requeue_response.status_code == 400
     assert "cannot be queued" in requeue_response.json()["detail"]
+
+
+def test_evaluation_job_queue_stats_and_empty_processor(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_stats.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    empty_process_response = client.post("/evaluation-jobs/process-queue?max_jobs=3")
+    assert empty_process_response.status_code == 200
+    empty_process_payload = empty_process_response.json()
+    assert empty_process_payload["requested_max_jobs"] == 3
+    assert empty_process_payload["processed_count"] == 0
+    assert empty_process_payload["results"] == []
+
+    create_response = client.post(
+        "/evaluation-jobs",
+        json={
+            "input_path": "sample_test_cases.jsonl",
+            "provider": "mock",
+            "model_name": "mock-baseline",
+            "evaluation_mode": "regression",
+            "oracle_profile": "default",
+            "repeat_count": 1,
+            "limit": 1,
+        },
+    )
+    assert create_response.status_code == 201
+    job_id = create_response.json()["job_id"]
+
+    stats_after_create = client.get("/evaluation-jobs/queue/stats")
+    assert stats_after_create.status_code == 200
+    create_stats_payload = stats_after_create.json()
+    assert create_stats_payload["total"] == 1
+    assert create_stats_payload["by_status"]["draft"] == 1
+    assert create_stats_payload["by_status"]["queued"] == 0
+    assert create_stats_payload["by_status"]["completed"] == 0
+
+    queue_response = client.post(f"/evaluation-jobs/{job_id}/queue")
+    assert queue_response.status_code == 200
+
+    stats_after_queue = client.get("/evaluation-jobs/queue/stats")
+    assert stats_after_queue.status_code == 200
+    queue_stats_payload = stats_after_queue.json()
+    assert queue_stats_payload["total"] == 1
+    assert queue_stats_payload["by_status"]["draft"] == 0
+    assert queue_stats_payload["by_status"]["queued"] == 1
+
+    process_response = client.post("/evaluation-jobs/process-queue?max_jobs=1")
+    assert process_response.status_code == 200
+    assert process_response.json()["processed_count"] == 1
+
+    stats_after_process = client.get("/evaluation-jobs/queue/stats")
+    assert stats_after_process.status_code == 200
+    process_stats_payload = stats_after_process.json()
+    assert process_stats_payload["total"] == 1
+    assert process_stats_payload["by_status"]["queued"] == 0
+    assert process_stats_payload["by_status"]["completed"] == 1

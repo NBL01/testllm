@@ -6,6 +6,7 @@ import type {
   JobRunResult,
   JobSummaryResult,
   QueueProcessResult,
+  QueueStatsResult,
   TracesResponse
 } from "./types";
 
@@ -64,6 +65,10 @@ export function processQueue(maxJobs = 10): Promise<QueueProcessResult> {
   return apiRequest<QueueProcessResult>(`/evaluation-jobs/process-queue?max_jobs=${maxJobs}`, {
     method: "POST"
   });
+}
+
+export function getQueueStats(): Promise<QueueStatsResult> {
+  return apiRequest<QueueStatsResult>("/evaluation-jobs/queue/stats");
 }
 
 export function getJobSummary(jobId: string): Promise<JobSummaryResult> {

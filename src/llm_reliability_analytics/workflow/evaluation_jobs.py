@@ -15,6 +15,7 @@ from llm_reliability_analytics.storage.evaluation_job_repository import (
     EvaluationJobCreate,
     EvaluationJobStatus,
     create_evaluation_job,
+    evaluation_job_status_counts,
     get_evaluation_job,
     list_evaluation_jobs,
     update_evaluation_job,
@@ -37,6 +38,11 @@ class EvaluationJobQueueProcessResult(BaseModel):
     requested_max_jobs: int
     processed_count: int
     results: list[EvaluationJobRunResult]
+
+
+class EvaluationJobQueueStatsResult(BaseModel):
+    total: int
+    by_status: dict[str, int]
 
 
 class EvaluationJobSummaryResult(BaseModel):
@@ -178,6 +184,12 @@ def process_queued_jobs(max_jobs: int = 10) -> EvaluationJobQueueProcessResult:
         processed_count=len(results),
         results=results,
     )
+
+
+def queue_stats() -> EvaluationJobQueueStatsResult:
+    counts = evaluation_job_status_counts()
+    total = sum(counts.values())
+    return EvaluationJobQueueStatsResult(total=total, by_status=counts)
 
 
 def get_job_summary(job_id: str) -> EvaluationJobSummaryResult:

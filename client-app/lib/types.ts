@@ -49,6 +49,17 @@ export type QueueProcessResult = {
   results: JobRunResult[];
 };
 
+export type QueueStatsResult = {
+  total: number;
+  by_status: {
+    draft: number;
+    queued: number;
+    running: number;
+    completed: number;
+    failed: number;
+  };
+};
+
 export type JobSummaryResult = {
   job: EvaluationJob;
   storage_summary: Record<string, unknown>;
