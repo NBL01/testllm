@@ -33,6 +33,12 @@ class EvaluationJobRunResult(BaseModel):
     result: RunBatchWorkflowResult
 
 
+class EvaluationJobQueueProcessResult(BaseModel):
+    requested_max_jobs: int
+    processed_count: int
+    results: list[EvaluationJobRunResult]
+
+
 class EvaluationJobSummaryResult(BaseModel):
     job: EvaluationJob
     storage_summary: RunAggregatedSummary
@@ -145,6 +151,33 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
         raise EvaluationJobNotFoundError(f"Evaluation job not found after completion update: {job_id}")
 
     return EvaluationJobRunResult(job=completed, result=result)
+
+
+def queue_job(job_id: str) -> EvaluationJob:
+    job = get_job(job_id)
+    if job.linked_run_id:
+        raise ValueError(f"Evaluation job cannot be queued after execution: {job_id}")
+    if job.status in {"running", "completed", "failed"}:
+        raise ValueError(f"Evaluation job cannot be queued from status={job.status}: {job_id}")
+    if job.status == "queued":
+        return job
+    queued = update_evaluation_job(job_id, status="queued")
+    if queued is None:
+        raise EvaluationJobNotFoundError(f"Evaluation job not found after queue update: {job_id}")
+    return queued
+
+
+def process_queued_jobs(max_jobs: int = 10) -> EvaluationJobQueueProcessResult:
+    effective_max = max(1, int(max_jobs))
+    queued_jobs = list_evaluation_jobs(limit=effective_max, status="queued")
+    results: list[EvaluationJobRunResult] = []
+    for job in queued_jobs:
+        results.append(run_job(job.job_id))
+    return EvaluationJobQueueProcessResult(
+        requested_max_jobs=effective_max,
+        processed_count=len(results),
+        results=results,
+    )
 
 
 def get_job_summary(job_id: str) -> EvaluationJobSummaryResult:

@@ -31,6 +31,7 @@ from llm_reliability_analytics.test_authoring.service import CandidateAuthoringS
 from llm_reliability_analytics.workflow.evaluation_jobs import (
     EvaluationJobFailedCase,
     EvaluationJobNotFoundError,
+    EvaluationJobQueueProcessResult,
     EvaluationJobReportPayload,
     EvaluationJobRunResult,
     EvaluationJobSummaryResult,
@@ -41,6 +42,8 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     get_job_summary,
     get_job_traces,
     list_jobs,
+    process_queued_jobs,
+    queue_job,
     run_job,
 )
 from llm_reliability_analytics.workflow.service import (
@@ -308,6 +311,36 @@ def get_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
 def run_evaluation_job_endpoint(job_id: str) -> EvaluationJobRunResult:
     try:
         return run_job(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LLMServiceUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMModelNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LLMRequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/evaluation-jobs/{job_id}/queue", response_model=EvaluationJob)
+def queue_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
+    try:
+        return queue_job(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/evaluation-jobs/process-queue", response_model=EvaluationJobQueueProcessResult)
+def process_evaluation_jobs_queue_endpoint(
+    max_jobs: int = Query(default=10, ge=1, le=500),
+) -> EvaluationJobQueueProcessResult:
+    try:
+        return process_queued_jobs(max_jobs=max_jobs)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
