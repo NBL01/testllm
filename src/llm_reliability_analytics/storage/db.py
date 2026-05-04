@@ -121,6 +121,32 @@ EXPECTED_TABLE_COLUMNS: dict[str, list[str]] = {
         "note",
         "created_at",
     ],
+    "evaluation_jobs": [
+        "job_id",
+        "status",
+        "input_path",
+        "provider",
+        "model_name",
+        "dataset_version",
+        "evaluation_mode",
+        "oracle_profile",
+        "temperature",
+        "max_output_tokens",
+        "timeout_seconds",
+        "repeat_count",
+        "limit",
+        "notes",
+        "submitted_by",
+        "team_name",
+        "client_name",
+        "project_name",
+        "linked_run_id",
+        "failure_reason",
+        "created_at",
+        "started_at",
+        "completed_at",
+        "updated_at",
+    ],
 }
 
 MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
@@ -224,6 +250,32 @@ MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
         "reviewer": "TEXT",
         "note": "TEXT",
         "created_at": "TIMESTAMP",
+    },
+    "evaluation_jobs": {
+        "job_id": "TEXT",
+        "status": "TEXT",
+        "input_path": "TEXT",
+        "provider": "TEXT",
+        "model_name": "TEXT",
+        "dataset_version": "TEXT",
+        "evaluation_mode": "TEXT",
+        "oracle_profile": "TEXT",
+        "temperature": "DOUBLE",
+        "max_output_tokens": "INTEGER",
+        "timeout_seconds": "DOUBLE",
+        "repeat_count": "INTEGER",
+        "limit": "INTEGER",
+        "notes": "TEXT",
+        "submitted_by": "TEXT",
+        "team_name": "TEXT",
+        "client_name": "TEXT",
+        "project_name": "TEXT",
+        "linked_run_id": "TEXT",
+        "failure_reason": "TEXT",
+        "created_at": "TIMESTAMP",
+        "started_at": "TIMESTAMP",
+        "completed_at": "TIMESTAMP",
+        "updated_at": "TIMESTAMP",
     },
 }
 
@@ -342,6 +394,34 @@ CREATE_TABLE_SQL: dict[str, str] = {
             created_at TIMESTAMP
         );
     """,
+    "evaluation_jobs": """
+        CREATE TABLE IF NOT EXISTS evaluation_jobs (
+            job_id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            input_path TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            model_name TEXT NOT NULL,
+            dataset_version TEXT,
+            evaluation_mode TEXT NOT NULL,
+            oracle_profile TEXT NOT NULL,
+            temperature DOUBLE NOT NULL,
+            max_output_tokens INTEGER NOT NULL,
+            timeout_seconds DOUBLE NOT NULL,
+            repeat_count INTEGER NOT NULL,
+            limit INTEGER,
+            notes TEXT,
+            submitted_by TEXT,
+            team_name TEXT,
+            client_name TEXT,
+            project_name TEXT,
+            linked_run_id TEXT,
+            failure_reason TEXT,
+            created_at TIMESTAMP,
+            started_at TIMESTAMP,
+            completed_at TIMESTAMP,
+            updated_at TIMESTAMP
+        );
+    """,
 }
 
 
@@ -368,6 +448,7 @@ def initialize_database() -> None:
         "evaluation_traces",
         "candidate_test_cases",
         "candidate_review_events",
+        "evaluation_jobs",
     ):
         _ensure_table_schema(conn, table_name)
     conn.close()

@@ -29,6 +29,7 @@ def test_initialize_storage_schema_creates_required_tables(monkeypatch, tmp_path
               'test_runs',
               'test_results',
               'evaluation_traces',
+              'evaluation_jobs',
               'candidate_test_cases',
               'candidate_review_events'
           )
@@ -40,6 +41,7 @@ def test_initialize_storage_schema_creates_required_tables(monkeypatch, tmp_path
     assert [row[0] for row in rows] == [
         "candidate_review_events",
         "candidate_test_cases",
+        "evaluation_jobs",
         "evaluation_traces",
         "test_cases",
         "test_results",

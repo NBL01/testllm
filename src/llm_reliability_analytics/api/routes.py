@@ -1,6 +1,6 @@
 """API endpoints for evaluation runs and candidate test authoring workflow."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -20,9 +20,29 @@ from llm_reliability_analytics.storage.candidate_repository import (
     update_candidate_status,
     upsert_candidate_test_cases,
 )
+from llm_reliability_analytics.storage.evaluation_job_repository import (
+    EvaluationJob,
+    EvaluationJobCreate,
+    EvaluationJobStatus,
+)
 from llm_reliability_analytics.storage.duckdb_store import RunAggregatedSummary
 from llm_reliability_analytics.test_authoring.models import CandidateStatus, CandidateTestCase
 from llm_reliability_analytics.test_authoring.service import CandidateAuthoringService
+from llm_reliability_analytics.workflow.evaluation_jobs import (
+    EvaluationJobFailedCase,
+    EvaluationJobNotFoundError,
+    EvaluationJobReportPayload,
+    EvaluationJobRunResult,
+    EvaluationJobSummaryResult,
+    create_job,
+    get_job_failed_cases,
+    get_job_report_payload,
+    get_job,
+    get_job_summary,
+    get_job_traces,
+    list_jobs,
+    run_job,
+)
 from llm_reliability_analytics.workflow.service import (
     RunNotFoundError,
     load_cases_to_storage,
@@ -121,6 +141,21 @@ class CandidateEventsResponse(BaseModel):
     candidate_id: str
     total: int
     events: list[CandidateReviewEvent]
+
+
+class EvaluationJobListResponse(BaseModel):
+    total: int
+    items: list[EvaluationJob]
+
+
+class EvaluationJobFailedCasesResponse(BaseModel):
+    total: int
+    items: list[EvaluationJobFailedCase]
+
+
+class EvaluationJobTracesResponse(BaseModel):
+    total: int
+    items: list[dict[str, Any]]
 
 
 @router.get("/health")
@@ -245,3 +280,96 @@ def candidate_events_endpoint(
         raise HTTPException(status_code=404, detail=f"Candidate not found: {candidate_id}")
     events = list_candidate_review_events(candidate_id=candidate_id, max_rows=limit)
     return CandidateEventsResponse(candidate_id=candidate_id, total=len(events), events=events)
+
+
+@router.post("/evaluation-jobs", response_model=EvaluationJob, status_code=201)
+def create_evaluation_job_endpoint(request: EvaluationJobCreate) -> EvaluationJob:
+    return create_job(request)
+
+
+@router.get("/evaluation-jobs", response_model=EvaluationJobListResponse)
+def list_evaluation_jobs_endpoint(
+    status: EvaluationJobStatus | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=5000),
+) -> EvaluationJobListResponse:
+    items = list_jobs(limit=limit, status=status)
+    return EvaluationJobListResponse(total=len(items), items=items)
+
+
+@router.get("/evaluation-jobs/{job_id}", response_model=EvaluationJob)
+def get_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
+    try:
+        return get_job(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/evaluation-jobs/{job_id}/run", response_model=EvaluationJobRunResult)
+def run_evaluation_job_endpoint(job_id: str) -> EvaluationJobRunResult:
+    try:
+        return run_job(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LLMServiceUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMModelNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except LLMRequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get("/evaluation-jobs/{job_id}/summary", response_model=EvaluationJobSummaryResult)
+def evaluation_job_summary_endpoint(job_id: str) -> EvaluationJobSummaryResult:
+    try:
+        return get_job_summary(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/evaluation-jobs/{job_id}/failed-cases", response_model=EvaluationJobFailedCasesResponse)
+def evaluation_job_failed_cases_endpoint(
+    job_id: str,
+    limit: int = Query(default=200, ge=1, le=5000),
+) -> EvaluationJobFailedCasesResponse:
+    try:
+        items = get_job_failed_cases(job_id, limit=limit)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return EvaluationJobFailedCasesResponse(total=len(items), items=items)
+
+
+@router.get("/evaluation-jobs/{job_id}/traces", response_model=EvaluationJobTracesResponse)
+def evaluation_job_traces_endpoint(
+    job_id: str,
+    limit: int = Query(default=200, ge=1, le=5000),
+    only_failed: bool = Query(default=True),
+) -> EvaluationJobTracesResponse:
+    try:
+        items = get_job_traces(job_id, limit=limit, only_failed=only_failed)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return EvaluationJobTracesResponse(total=len(items), items=items)
+
+
+@router.get("/evaluation-jobs/{job_id}/report", response_model=EvaluationJobReportPayload)
+def evaluation_job_report_endpoint(job_id: str) -> EvaluationJobReportPayload:
+    try:
+        return get_job_report_payload(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
