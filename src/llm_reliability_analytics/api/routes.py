@@ -417,9 +417,10 @@ def evaluation_job_traces_endpoint(
     job_id: str,
     limit: int = Query(default=200, ge=1, le=5000),
     only_failed: bool = Query(default=True),
+    test_case_id: str | None = Query(default=None),
 ) -> EvaluationJobTracesResponse:
     try:
-        items = get_job_traces(job_id, limit=limit, only_failed=only_failed)
+        items = get_job_traces(job_id, limit=limit, only_failed=only_failed, test_case_id=test_case_id)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

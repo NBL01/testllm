@@ -68,6 +68,7 @@ def capture_traces_for_run(results: list[TestResult]) -> int:
 def fetch_traces(
     run_id: str | None = None,
     category: str | None = None,
+    test_case_id: str | None = None,
     only_failed: bool = False,
     max_rows: int = 500,
 ) -> list[dict[str, Any]]:
@@ -82,6 +83,9 @@ def fetch_traces(
     if category:
         conditions.append("category = ?")
         params.append(category)
+    if test_case_id:
+        conditions.append("test_case_id = ?")
+        params.append(test_case_id)
     if only_failed:
         conditions.append("is_correct = FALSE")
 

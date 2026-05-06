@@ -238,6 +238,10 @@ python scripts/run_batch.py \
 - `GET /evaluation-jobs/{job_id}/traces`
 - `GET /evaluation-jobs/{job_id}/report`
 
+`GET /evaluation-jobs/{job_id}/traces` supports optional query filters:
+- `only_failed=true|false`
+- `test_case_id=<case_id>`
+
 ## V2 Scope and Roadmap
 
 - Product scope: `docs/PRODUCT_SCOPE_V2.md`

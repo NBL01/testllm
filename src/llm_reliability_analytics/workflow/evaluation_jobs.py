@@ -258,10 +258,21 @@ def get_job_failed_cases(job_id: str, limit: int = 200) -> list[EvaluationJobFai
     ]
 
 
-def get_job_traces(job_id: str, limit: int = 200, only_failed: bool = True) -> list[dict[str, Any]]:
+def get_job_traces(
+    job_id: str,
+    limit: int = 200,
+    only_failed: bool = True,
+    test_case_id: str | None = None,
+) -> list[dict[str, Any]]:
     job = get_job(job_id)
     run_id = _require_run_id(job)
-    return fetch_traces(run_id=run_id, only_failed=only_failed, max_rows=limit)
+    normalized_test_case_id = (test_case_id or "").strip() or None
+    return fetch_traces(
+        run_id=run_id,
+        only_failed=only_failed,
+        test_case_id=normalized_test_case_id,
+        max_rows=limit,
+    )
 
 
 def get_job_report_payload(job_id: str) -> EvaluationJobReportPayload:

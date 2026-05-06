@@ -99,8 +99,18 @@ export function getJobFailedCases(jobId: string, limit = 50): Promise<FailedCase
   return apiRequest<FailedCasesResponse>(`/evaluation-jobs/${jobId}/failed-cases?limit=${limit}`);
 }
 
-export function getJobTraces(jobId: string, limit = 50): Promise<TracesResponse> {
-  return apiRequest<TracesResponse>(`/evaluation-jobs/${jobId}/traces?limit=${limit}&only_failed=true`);
+export function getJobTraces(
+  jobId: string,
+  options?: { limit?: number; onlyFailed?: boolean; testCaseId?: string }
+): Promise<TracesResponse> {
+  const query = new URLSearchParams();
+  query.set("limit", String(options?.limit ?? 50));
+  query.set("only_failed", String(options?.onlyFailed ?? true));
+  const normalizedTestCaseId = (options?.testCaseId || "").trim();
+  if (normalizedTestCaseId) {
+    query.set("test_case_id", normalizedTestCaseId);
+  }
+  return apiRequest<TracesResponse>(`/evaluation-jobs/${jobId}/traces?${query.toString()}`);
 }
 
 export function getJobReport(jobId: string): Promise<JobReportPayload> {

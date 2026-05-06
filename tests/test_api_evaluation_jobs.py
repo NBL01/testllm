@@ -307,3 +307,41 @@ def test_evaluation_job_list_can_filter_by_status(monkeypatch, tmp_path) -> None
     draft_payload = draft_only_response.json()
     assert draft_payload["total"] == 1
     assert draft_payload["items"][0]["status"] == "draft"
+
+
+def test_evaluation_job_traces_can_filter_by_test_case_id(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_trace_filter.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/evaluation-jobs",
+        json={
+            "input_path": "sample_test_cases.jsonl",
+            "provider": "mock",
+            "model_name": "mock-baseline",
+            "evaluation_mode": "regression",
+            "oracle_profile": "default",
+            "repeat_count": 1,
+            "limit": 4,
+        },
+    )
+    assert create_response.status_code == 201
+    job_id = create_response.json()["job_id"]
+
+    run_response = client.post(f"/evaluation-jobs/{job_id}/run")
+    assert run_response.status_code == 200
+
+    unfiltered_response = client.get(f"/evaluation-jobs/{job_id}/traces?limit=100&only_failed=false")
+    assert unfiltered_response.status_code == 200
+    unfiltered_payload = unfiltered_response.json()
+    assert unfiltered_payload["total"] > 0
+    target_test_case_id = unfiltered_payload["items"][0]["test_case_id"]
+
+    filtered_response = client.get(
+        f"/evaluation-jobs/{job_id}/traces?limit=100&only_failed=false&test_case_id={target_test_case_id}"
+    )
+    assert filtered_response.status_code == 200
+    filtered_payload = filtered_response.json()
+    assert filtered_payload["total"] > 0
+    assert all(item["test_case_id"] == target_test_case_id for item in filtered_payload["items"])

@@ -40,6 +40,8 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   const [failedCases, setFailedCases] = useState<FailedCase[]>([]);
   const [traces, setTraces] = useState<TraceRecord[]>([]);
   const [report, setReport] = useState<JobReportPayload | null>(null);
+  const [traceCaseInput, setTraceCaseInput] = useState("");
+  const [traceCaseFilter, setTraceCaseFilter] = useState("");
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [queueing, setQueueing] = useState(false);
@@ -68,7 +70,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     return ["draft", "queued"].includes(job.status) && !job.linked_run_id;
   }, [job]);
 
-  async function loadAll() {
+  async function loadAll(activeTraceCaseFilter?: string) {
     setLoading(true);
     setError("");
     try {
@@ -76,10 +78,15 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
       setJob(loadedJob);
 
       if (loadedJob.linked_run_id) {
+        const normalizedCaseFilter = (activeTraceCaseFilter ?? traceCaseFilter).trim();
         const [summaryData, failedData, tracesData, reportData] = await Promise.all([
           getJobSummary(params.jobId),
           getJobFailedCases(params.jobId, 100),
-          getJobTraces(params.jobId, 100),
+          getJobTraces(params.jobId, {
+            limit: 100,
+            onlyFailed: true,
+            testCaseId: normalizedCaseFilter || undefined
+          }),
           getJobReport(params.jobId)
         ]);
         setSummary(summaryData);
@@ -102,7 +109,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   useEffect(() => {
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.jobId]);
+  }, [params.jobId, traceCaseFilter]);
 
   useEffect(() => {
     if (!job || !["queued", "running"].includes(job.status)) return;
@@ -118,7 +125,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     setError("");
     try {
       await runJob(params.jobId);
-      await loadAll();
+      await loadAll(traceCaseFilter);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to run evaluation job.");
     } finally {
@@ -131,7 +138,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     setError("");
     try {
       await queueJob(params.jobId);
-      await loadAll();
+      await loadAll(traceCaseFilter);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to queue evaluation job.");
     } finally {
@@ -144,7 +151,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     setError("");
     try {
       await processQueue(1);
-      await loadAll();
+      await loadAll(traceCaseFilter);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to process queued jobs.");
     } finally {
@@ -158,7 +165,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     setError("");
     try {
       await cancelJob(params.jobId, reason);
-      await loadAll();
+      await loadAll(traceCaseFilter);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to cancel evaluation job.");
     } finally {
@@ -321,6 +328,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                       <th>Score</th>
                       <th>Error</th>
                       <th>Explanation</th>
+                      <th>Trace</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -334,6 +342,18 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                         <td>{item.score.toFixed(3)}</td>
                         <td>{item.error_type || "n/a"}</td>
                         <td>{item.explanation || "n/a"}</td>
+                        <td>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => {
+                              setTraceCaseInput(item.test_case_id);
+                              setTraceCaseFilter(item.test_case_id);
+                            }}
+                            type="button"
+                          >
+                            View Traces
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -344,6 +364,31 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
 
           <section className="panel">
             <h2>Oracle Traces ({traces.length})</h2>
+            <div className="btn-row" style={{ marginBottom: "0.6rem" }}>
+              <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                Filter case
+                <input
+                  className="input"
+                  placeholder="test_case_id"
+                  value={traceCaseInput}
+                  onChange={(event) => setTraceCaseInput(event.target.value)}
+                />
+              </label>
+              <button className="btn btn-secondary" onClick={() => setTraceCaseFilter(traceCaseInput.trim())} type="button">
+                Apply Filter
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  setTraceCaseInput("");
+                  setTraceCaseFilter("");
+                }}
+                type="button"
+              >
+                Clear Filter
+              </button>
+            </div>
+            {traceCaseFilter && <p className="meta">Active filter: <code>{traceCaseFilter}</code></p>}
             {traces.length === 0 ? (
               <p className="meta">No traces available yet.</p>
             ) : (
