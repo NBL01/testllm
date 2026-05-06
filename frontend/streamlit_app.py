@@ -59,7 +59,7 @@ from frontend.utils.formatters import as_int, dt, mode_badge, pct  # noqa: E402
 from llm_reliability_analytics.test_authoring.models import CandidateStatus  # noqa: E402
 
 
-st.set_page_config(page_title="LLM Reliability Dashboard", layout="wide")
+st.set_page_config(page_title="LLM Reliability Admin Console", layout="wide")
 
 
 @st.cache_data(show_spinner=False)
@@ -75,18 +75,30 @@ def get_run_launcher() -> RunLauncher:
 
 
 def main() -> None:
-    st.title("LLM Reliability Analytics Dashboard")
-    st.caption("Structured evaluation of LLM systems across test cases, oracles, and aggregated reliability metrics.")
+    st.title("LLM Reliability Internal Admin Console")
+    st.caption(
+        "Internal analytics, oracle debugging, model comparison, and dataset studio. "
+        "For client-facing evaluation workflow, use the Next.js app."
+    )
+    st.info(
+        "Internal surface: use this dashboard for research and operations. "
+        "Client-facing job creation/review is handled in the Next.js app."
+    )
 
     launcher = get_run_launcher()
     db_signature = _db_signature(DataProvider(project_root=PROJECT_ROOT).db_path)
     runs_df, cases_df, results_df, source, note, db_path = load_dashboard_data(db_signature)
     adapter = MetricsAdapter()
 
-    st.sidebar.header("Workspace")
+    st.sidebar.header("Internal Workspace")
     page = st.sidebar.radio(
         "Page",
-        ["Analytics Dashboard", "Run New Evaluation", "Model Comparison", "Dataset Studio (V2 Preview)"],
+        [
+            "Admin Analytics Dashboard",
+            "Admin Run New Evaluation",
+            "Admin Model Comparison",
+            "Dataset Studio (V2 Preview)",
+        ],
         index=0,
     )
     if st.sidebar.button("Refresh data"):
@@ -99,11 +111,11 @@ def main() -> None:
         if note:
             st.write(note)
 
-    if page == "Run New Evaluation":
+    if page == "Admin Run New Evaluation":
         _render_run_new_page(launcher=launcher, runs_df=runs_df)
         return
 
-    if page == "Model Comparison":
+    if page == "Admin Model Comparison":
         _render_model_comparison_page(adapter=adapter, runs_df=runs_df, results_df=results_df)
         return
 
@@ -125,7 +137,7 @@ def main() -> None:
 
     run_options_df = adapter.run_selector_options(runs_df=filtered_runs_df, results_df=results_df)
     if run_options_df.empty:
-        st.warning("No runs available yet. Open the 'Run New Evaluation' page and start a batch.")
+        st.warning("No runs available yet. Open the 'Admin Run New Evaluation' page and start a batch.")
         if note:
             st.info(note)
         st.stop()

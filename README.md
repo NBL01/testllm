@@ -123,11 +123,17 @@ uvicorn llm_reliability_analytics.main:app --app-dir src --reload
 Open docs:
 - http://127.0.0.1:8000/docs
 
-## Running Streamlit Dashboard
+## Running Streamlit Internal Admin Console
 
 ```bash
 streamlit run frontend/streamlit_app.py
 ```
+
+Use Streamlit for:
+- internal analytics and KPI deep-dives
+- experiment/model comparison
+- oracle/debug workflows
+- dataset studio and candidate curation
 
 ## Running Client-Facing Next.js MVP
 
@@ -141,6 +147,31 @@ Optional API base URL:
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm run dev
+```
+
+Use Next.js for:
+- creating evaluation jobs
+- tracking job status
+- reviewing summary metrics
+- inspecting failed cases and traces
+- exporting client-facing reports
+
+## Running Both UI Surfaces Together
+
+Terminal 1 (FastAPI):
+```bash
+uvicorn llm_reliability_analytics.main:app --app-dir src --reload
+```
+
+Terminal 2 (Next.js client app):
+```bash
+cd client-app
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm run dev
+```
+
+Terminal 3 (Streamlit internal admin):
+```bash
+streamlit run frontend/streamlit_app.py
 ```
 
 ## Running Evaluations with a Selected Local Model
