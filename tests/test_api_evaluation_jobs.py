@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from llm_reliability_analytics.main import app
@@ -168,6 +170,47 @@ def test_evaluation_job_queue_and_process(monkeypatch, tmp_path) -> None:
     requeue_response = client.post(f"/evaluation-jobs/{job_id}/queue")
     assert requeue_response.status_code == 400
     assert "cannot be queued" in requeue_response.json()["detail"]
+
+
+def test_evaluation_job_queue_processing_is_fifo(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_queue_fifo.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    created_job_ids: list[str] = []
+    for project_name in ["fifo-first", "fifo-second", "fifo-third"]:
+        create_response = client.post(
+            "/evaluation-jobs",
+            json={
+                "input_path": "sample_test_cases.jsonl",
+                "provider": "mock",
+                "model_name": "mock-baseline",
+                "evaluation_mode": "regression",
+                "oracle_profile": "default",
+                "repeat_count": 1,
+                "limit": 1,
+                "project_name": project_name,
+            },
+        )
+        assert create_response.status_code == 201
+        job_id = create_response.json()["job_id"]
+        created_job_ids.append(job_id)
+        queue_response = client.post(f"/evaluation-jobs/{job_id}/queue")
+        assert queue_response.status_code == 200
+        time.sleep(0.01)
+
+    process_response = client.post("/evaluation-jobs/process-queue?max_jobs=2")
+    assert process_response.status_code == 200
+    payload = process_response.json()
+    assert payload["processed_count"] == 2
+    processed_ids = [item["job"]["job_id"] for item in payload["results"]]
+    assert processed_ids == created_job_ids[:2]
+
+    remaining_response = client.get("/evaluation-jobs?status=queued&limit=10&offset=0")
+    assert remaining_response.status_code == 200
+    remaining_payload = remaining_response.json()
+    assert remaining_payload["total"] == 1
+    assert remaining_payload["items"][0]["job_id"] == created_job_ids[2]
 
 
 def test_evaluation_job_queue_stats_and_empty_processor(monkeypatch, tmp_path) -> None:

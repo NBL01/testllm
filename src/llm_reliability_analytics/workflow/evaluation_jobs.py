@@ -284,7 +284,12 @@ def queue_job(job_id: str) -> EvaluationJob:
 
 def process_queued_jobs(max_jobs: int = 10) -> EvaluationJobQueueProcessResult:
     effective_max = max(1, int(max_jobs))
-    queued_jobs = list_evaluation_jobs(limit=effective_max, status="queued")
+    queued_jobs = list_evaluation_jobs(
+        limit=effective_max,
+        status="queued",
+        sort_by="created_at",
+        sort_order="asc",
+    )
     results: list[EvaluationJobRunResult] = []
     for job in queued_jobs:
         results.append(run_job(job.job_id))

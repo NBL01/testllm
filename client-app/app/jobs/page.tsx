@@ -75,6 +75,15 @@ export default function JobsPage() {
     setJobsOffset(0);
   }, [sortBy, sortOrder]);
 
+  useEffect(() => {
+    if (!queueStats) return;
+    if (queueStats.by_status.queued <= 0 && queueStats.by_status.running <= 0) return;
+    const timer = window.setInterval(() => {
+      void load();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [queueStats?.by_status.queued, queueStats?.by_status.running, statusFilter, jobsOffset, sortBy, sortOrder]);
+
   const canPrevious = jobsOffset > 0;
   const canNext = jobsOffset + jobs.length < totalJobs;
   const showingFrom = totalJobs === 0 ? 0 : jobsOffset + 1;
@@ -156,6 +165,7 @@ export default function JobsPage() {
             {queueStats.by_status.running} | draft: {queueStats.by_status.draft} | completed:{" "}
             {queueStats.by_status.completed} | failed: {queueStats.by_status.failed} | canceled:{" "}
             {queueStats.by_status.canceled}
+            {(queueStats.by_status.queued > 0 || queueStats.by_status.running > 0) && " | auto-refresh 3s"}
           </p>
         )}
         {loading && <p className="meta">Loading jobs...</p>}
