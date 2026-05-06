@@ -151,3 +151,16 @@ export type JobOptionsResponse = {
   oracle_types: string[];
   evaluation_modes: string[];
 };
+
+export type HealthResponse = {
+  status: string;
+};
+
+export type ModelsResponse = {
+  provider: string;
+  ollama_reachable: boolean;
+  installed_models: string[];
+  recommended_models: string[];
+  available_models: string[];
+  error: string | null;
+};

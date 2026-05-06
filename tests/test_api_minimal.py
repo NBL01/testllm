@@ -51,3 +51,15 @@ def test_minimal_api_flow(monkeypatch, tmp_path) -> None:
     report_payload = report_response.json()
     assert report_payload["run_id"] == run_id
     assert report_payload["storage_summary"]["total_test_cases"] == 10
+
+
+def test_models_endpoint_returns_expected_shape() -> None:
+    client = TestClient(app)
+    response = client.get("/models")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "ollama"
+    assert "ollama_reachable" in payload
+    assert isinstance(payload["installed_models"], list)
+    assert isinstance(payload["recommended_models"], list)
+    assert isinstance(payload["available_models"], list)

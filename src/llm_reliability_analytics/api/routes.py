@@ -11,7 +11,9 @@ from llm_reliability_analytics.runner.llm_client import (
     LLMModelNotFoundError,
     LLMRequestError,
     LLMServiceUnavailableError,
+    RECOMMENDED_OLLAMA_MODELS,
 )
+from llm_reliability_analytics.runner.ollama_client import OllamaLLMClient
 from llm_reliability_analytics.storage.candidate_repository import (
     CandidateReviewEvent,
     get_candidate_test_case,
@@ -183,9 +185,41 @@ class EvaluationJobTracesResponse(BaseModel):
     items: list[dict[str, Any]]
 
 
+class ModelsResponse(BaseModel):
+    provider: str = "ollama"
+    ollama_reachable: bool
+    installed_models: list[str]
+    recommended_models: list[str]
+    available_models: list[str]
+    error: str | None = None
+
+
 @router.get("/health")
 def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/models", response_model=ModelsResponse)
+def models_endpoint() -> ModelsResponse:
+    client = OllamaLLMClient(model_name=RECOMMENDED_OLLAMA_MODELS[0], timeout_seconds=5.0)
+    try:
+        installed = client.list_installed_models()
+        available = sorted(set([*RECOMMENDED_OLLAMA_MODELS, *installed]))
+        return ModelsResponse(
+            ollama_reachable=True,
+            installed_models=installed,
+            recommended_models=RECOMMENDED_OLLAMA_MODELS,
+            available_models=available,
+            error=None,
+        )
+    except (LLMServiceUnavailableError, LLMRequestError) as exc:
+        return ModelsResponse(
+            ollama_reachable=False,
+            installed_models=[],
+            recommended_models=RECOMMENDED_OLLAMA_MODELS,
+            available_models=RECOMMENDED_OLLAMA_MODELS,
+            error=str(exc),
+        )
 
 
 @router.post("/load-test-cases", response_model=LoadTestCasesResponse)

@@ -149,6 +149,9 @@ Optional API base URL:
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm run dev
 ```
 
+If not set, the client app defaults to:
+- `http://localhost:8000`
+
 Use Next.js for:
 - creating evaluation jobs
 - tracking job status
@@ -248,6 +251,7 @@ python scripts/run_batch.py \
 ## API Endpoints
 
 - `GET /health`
+- `GET /models`
 - `POST /load-test-cases`
 - `POST /run-batch`
 - `GET /report/{run_id}`
