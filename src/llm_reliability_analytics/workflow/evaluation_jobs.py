@@ -91,6 +91,17 @@ class EvaluationJobReportPayload(BaseModel):
     report: ReliabilityReport
 
 
+class EvaluationJobClientReportPayload(BaseModel):
+    job: EvaluationJob
+    run_id: str
+    generated_at: datetime
+    storage_summary: RunAggregatedSummary
+    report: ReliabilityReport
+    failed_case_total: int
+    failed_cases_sample: list[EvaluationJobFailedCase]
+    markdown_report: str
+
+
 class EvaluationJobFailedCasesResult(BaseModel):
     total: int
     limit: int
@@ -377,6 +388,24 @@ def get_job_report_payload(job_id: str) -> EvaluationJobReportPayload:
         markdown_report=markdown_report,
         storage_summary=run_report.storage_summary,
         report=run_report.report,
+    )
+
+
+def get_job_client_report_payload(job_id: str, failed_case_limit: int = 20) -> EvaluationJobClientReportPayload:
+    job = get_job(job_id)
+    run_id = _require_run_id(job)
+    run_report: RunReportResult = run_report_workflow(run_id)
+    markdown_report = generate_run_markdown_report(run_id)
+    failed_cases = get_job_failed_cases(job_id, limit=failed_case_limit, offset=0)
+    return EvaluationJobClientReportPayload(
+        job=job,
+        run_id=run_id,
+        generated_at=datetime.now(timezone.utc),
+        storage_summary=run_report.storage_summary,
+        report=run_report.report,
+        failed_case_total=failed_cases.total,
+        failed_cases_sample=failed_cases.items,
+        markdown_report=markdown_report,
     )
 
 

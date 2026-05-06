@@ -1,4 +1,5 @@
 import type {
+  JobClientReportPayload,
   EvaluationJob,
   EvaluationJobListResponse,
   FailedCasesResponse,
@@ -136,4 +137,10 @@ export function getJobTraces(
 
 export function getJobReport(jobId: string): Promise<JobReportPayload> {
   return apiRequest<JobReportPayload>(`/evaluation-jobs/${jobId}/report`);
+}
+
+export function getJobClientReport(jobId: string, failedCaseLimit = 20): Promise<JobClientReportPayload> {
+  return apiRequest<JobClientReportPayload>(
+    `/evaluation-jobs/${jobId}/client-report?failed_case_limit=${failedCaseLimit}`
+  );
 }

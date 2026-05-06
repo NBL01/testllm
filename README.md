@@ -239,6 +239,7 @@ python scripts/run_batch.py \
 - `GET /evaluation-jobs/{job_id}/failed-cases`
 - `GET /evaluation-jobs/{job_id}/traces`
 - `GET /evaluation-jobs/{job_id}/report`
+- `GET /evaluation-jobs/{job_id}/client-report`
 
 Pagination query params supported:
 - `GET /evaluation-jobs?limit=<n>&offset=<n>&status=<status>`

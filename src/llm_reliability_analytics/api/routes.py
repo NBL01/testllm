@@ -30,6 +30,7 @@ from llm_reliability_analytics.test_authoring.models import CandidateStatus, Can
 from llm_reliability_analytics.test_authoring.service import CandidateAuthoringService
 from llm_reliability_analytics.workflow.evaluation_jobs import (
     EvaluationJobCancelRequest,
+    EvaluationJobClientReportPayload,
     EvaluationJobFailedCase,
     EvaluationJobFailedCasesResult,
     EvaluationJobListResult,
@@ -45,6 +46,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     duplicate_job,
     get_job_failed_cases,
     get_job_report_payload,
+    get_job_client_report_payload,
     get_job,
     get_job_summary,
     get_job_traces,
@@ -487,6 +489,21 @@ def evaluation_job_traces_endpoint(
 def evaluation_job_report_endpoint(job_id: str) -> EvaluationJobReportPayload:
     try:
         return get_job_report_payload(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/evaluation-jobs/{job_id}/client-report", response_model=EvaluationJobClientReportPayload)
+def evaluation_job_client_report_endpoint(
+    job_id: str,
+    failed_case_limit: int = Query(default=20, ge=1, le=200),
+) -> EvaluationJobClientReportPayload:
+    try:
+        return get_job_client_report_payload(job_id=job_id, failed_case_limit=failed_case_limit)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

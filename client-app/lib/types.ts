@@ -131,6 +131,17 @@ export type JobReportPayload = {
   report: Record<string, unknown>;
 };
 
+export type JobClientReportPayload = {
+  job: EvaluationJob;
+  run_id: string;
+  generated_at: string;
+  storage_summary: Record<string, unknown>;
+  report: Record<string, unknown>;
+  failed_case_total: number;
+  failed_cases_sample: FailedCase[];
+  markdown_report: string;
+};
+
 export type JobOptionsResponse = {
   providers: string[];
   models_by_provider: Record<string, string[]>;

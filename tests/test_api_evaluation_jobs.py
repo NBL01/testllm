@@ -116,6 +116,15 @@ def test_evaluation_job_run_links_test_run(monkeypatch, tmp_path) -> None:
     assert report_payload["run_id"] == run_payload["job"]["linked_run_id"]
     assert "LLM Reliability Report" in report_payload["markdown_report"]
 
+    client_report_response = client.get(f"/evaluation-jobs/{job_id}/client-report?failed_case_limit=5")
+    assert client_report_response.status_code == 200
+    client_report_payload = client_report_response.json()
+    assert client_report_payload["run_id"] == run_payload["job"]["linked_run_id"]
+    assert "generated_at" in client_report_payload
+    assert client_report_payload["failed_case_total"] >= 0
+    assert len(client_report_payload["failed_cases_sample"]) <= 5
+    assert "LLM Reliability Report" in client_report_payload["markdown_report"]
+
 
 def test_evaluation_job_queue_and_process(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "api_eval_jobs_queue.duckdb"

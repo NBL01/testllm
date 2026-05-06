@@ -7,6 +7,7 @@ import {
   cancelJob,
   duplicateJob,
   getJob,
+  getJobClientReport,
   getJobFailedCases,
   getJobReport,
   getJobSummary,
@@ -238,6 +239,25 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(objectUrl);
+  }
+
+  async function downloadClientJsonReport() {
+    try {
+      const payload = await getJobClientReport(params.jobId, 25);
+      const body = JSON.stringify(payload, null, 2);
+      const blob = new Blob([body], { type: "application/json;charset=utf-8" });
+      const link = document.createElement("a");
+      const objectUrl = URL.createObjectURL(blob);
+      const runLabel = payload.run_id || params.jobId;
+      link.href = objectUrl;
+      link.download = `evaluation-client-report-${runLabel}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download client report.");
+    }
   }
 
   return (
@@ -532,6 +552,9 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                   </button>
                   <button className="btn btn-secondary" onClick={downloadReport} type="button">
                     Download .md
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => void downloadClientJsonReport()} type="button">
+                    Download Client .json
                   </button>
                 </div>
                 <pre>{report.markdown_report}</pre>
