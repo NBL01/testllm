@@ -43,7 +43,13 @@ async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Pro
   return (await response.json()) as T;
 }
 
-export function listJobs(params?: { status?: string; limit?: number; offset?: number }): Promise<EvaluationJobListResponse> {
+export function listJobs(params?: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+  sortBy?: "created_at" | "updated_at";
+  sortOrder?: "asc" | "desc";
+}): Promise<EvaluationJobListResponse> {
   const query = new URLSearchParams();
   if (params?.status && params.status !== "all") {
     query.set("status", params.status);
@@ -53,6 +59,12 @@ export function listJobs(params?: { status?: string; limit?: number; offset?: nu
   }
   if (typeof params?.offset === "number" && params.offset >= 0) {
     query.set("offset", String(params.offset));
+  }
+  if (params?.sortBy) {
+    query.set("sort_by", params.sortBy);
+  }
+  if (params?.sortOrder) {
+    query.set("sort_order", params.sortOrder);
   }
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return apiRequest<EvaluationJobListResponse>(`/evaluation-jobs${suffix}`);

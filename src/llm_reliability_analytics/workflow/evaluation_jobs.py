@@ -162,13 +162,31 @@ def retry_job(job_id: str, queue: bool = False) -> EvaluationJob:
     return duplicated
 
 
-def list_jobs(limit: int = 100, status: EvaluationJobStatus | None = None, offset: int = 0) -> EvaluationJobListResult:
+def list_jobs(
+    limit: int = 100,
+    status: EvaluationJobStatus | None = None,
+    offset: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> EvaluationJobListResult:
     normalized_status = status.strip() if isinstance(status, str) else None
     if normalized_status not in {"draft", "queued", "running", "completed", "failed", "canceled"}:
         normalized_status = None
+    normalized_sort_by = sort_by.strip().lower()
+    if normalized_sort_by not in {"created_at", "updated_at"}:
+        normalized_sort_by = "created_at"
+    normalized_sort_order = sort_order.strip().lower()
+    if normalized_sort_order not in {"asc", "desc"}:
+        normalized_sort_order = "desc"
     effective_offset = max(0, int(offset))
     normalized = cast(EvaluationJobStatus | None, normalized_status)
-    items = list_evaluation_jobs(limit=limit, status=normalized, offset=effective_offset)
+    items = list_evaluation_jobs(
+        limit=limit,
+        status=normalized,
+        offset=effective_offset,
+        sort_by=normalized_sort_by,
+        sort_order=normalized_sort_order,
+    )
     total = count_evaluation_jobs(status=normalized)
     return EvaluationJobListResult(
         total=total,

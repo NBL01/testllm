@@ -191,13 +191,17 @@ def list_evaluation_jobs(
     limit: int = 100,
     status: EvaluationJobStatus | None = None,
     offset: int = 0,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
 ) -> list[EvaluationJob]:
     initialize_schema()
     conn = get_connection()
     effective_offset = max(0, int(offset))
+    resolved_sort_by = "updated_at" if sort_by.strip().lower() == "updated_at" else "created_at"
+    resolved_sort_order = "ASC" if sort_order.strip().lower() == "asc" else "DESC"
     if status is None:
         rows = conn.execute(
-            """
+            f"""
             SELECT
                 job_id,
                 status,
@@ -224,14 +228,14 @@ def list_evaluation_jobs(
                 completed_at,
                 updated_at
             FROM evaluation_jobs
-            ORDER BY created_at DESC
+            ORDER BY {resolved_sort_by} {resolved_sort_order}
             LIMIT ? OFFSET ?;
             """,
             [limit, effective_offset],
         ).fetchall()
     else:
         rows = conn.execute(
-            """
+            f"""
             SELECT
                 job_id,
                 status,
@@ -259,7 +263,7 @@ def list_evaluation_jobs(
                 updated_at
             FROM evaluation_jobs
             WHERE status = ?
-            ORDER BY created_at DESC
+            ORDER BY {resolved_sort_by} {resolved_sort_order}
             LIMIT ? OFFSET ?;
             """,
             [status, limit, effective_offset],

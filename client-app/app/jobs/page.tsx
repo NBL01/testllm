@@ -17,6 +17,8 @@ export default function JobsPage() {
   const [jobs, setJobs] = useState<EvaluationJob[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStatsResult | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<"created_at" | "updated_at">("created_at");
+  const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
   const [totalJobs, setTotalJobs] = useState(0);
   const [jobsOffset, setJobsOffset] = useState(0);
   const [error, setError] = useState<string>("");
@@ -29,7 +31,13 @@ export default function JobsPage() {
     setError("");
     try {
       const [response, stats] = await Promise.all([
-        listJobs({ status: statusFilter, limit: jobsPageSize, offset: jobsOffset }),
+        listJobs({
+          status: statusFilter,
+          limit: jobsPageSize,
+          offset: jobsOffset,
+          sortBy,
+          sortOrder
+        }),
         getQueueStats()
       ]);
       setJobs(response.items);
@@ -57,11 +65,15 @@ export default function JobsPage() {
 
   useEffect(() => {
     void load();
-  }, [statusFilter, jobsOffset]);
+  }, [statusFilter, jobsOffset, sortBy, sortOrder]);
 
   useEffect(() => {
     setJobsOffset(0);
   }, [statusFilter]);
+
+  useEffect(() => {
+    setJobsOffset(0);
+  }, [sortBy, sortOrder]);
 
   const canPrevious = jobsOffset > 0;
   const canNext = jobsOffset + jobs.length < totalJobs;
@@ -100,6 +112,20 @@ export default function JobsPage() {
               <option value="completed">completed</option>
               <option value="failed">failed</option>
               <option value="canceled">canceled</option>
+            </select>
+          </label>
+          <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+            Sort by
+            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as "created_at" | "updated_at")}>
+              <option value="created_at">created_at</option>
+              <option value="updated_at">updated_at</option>
+            </select>
+          </label>
+          <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+            Order
+            <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as "desc" | "asc")}>
+              <option value="desc">desc</option>
+              <option value="asc">asc</option>
             </select>
           </label>
         </div>

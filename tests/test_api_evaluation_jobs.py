@@ -336,6 +336,18 @@ def test_evaluation_job_list_can_filter_by_status(monkeypatch, tmp_path) -> None
     assert all_page_two_payload["offset"] == 1
     assert len(all_page_two_payload["items"]) == 1
 
+    created_asc_response = client.get("/evaluation-jobs?sort_by=created_at&sort_order=asc&limit=2&offset=0")
+    assert created_asc_response.status_code == 200
+    created_asc_payload = created_asc_response.json()
+    assert created_asc_payload["total"] == 2
+    assert created_asc_payload["items"][0]["job_id"] == first_create.json()["job_id"]
+
+    updated_desc_response = client.get("/evaluation-jobs?sort_by=updated_at&sort_order=desc&limit=2&offset=0")
+    assert updated_desc_response.status_code == 200
+    updated_desc_payload = updated_desc_response.json()
+    assert updated_desc_payload["total"] == 2
+    assert updated_desc_payload["items"][0]["status"] == "queued"
+
 
 def test_evaluation_job_can_be_duplicated_as_new_draft(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "api_eval_jobs_duplicate.duckdb"
