@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   cancelJob,
+  duplicateJob,
   getJob,
   getJobFailedCases,
   getJobReport,
@@ -35,6 +37,7 @@ function asPct(value: number | undefined): string {
 }
 
 export default function JobDetailPage({ params }: { params: { jobId: string } }) {
+  const router = useRouter();
   const [job, setJob] = useState<EvaluationJob | null>(null);
   const [summary, setSummary] = useState<JobSummaryResult | null>(null);
   const [failedCases, setFailedCases] = useState<FailedCase[]>([]);
@@ -49,6 +52,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [queueing, setQueueing] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const [processingQueue, setProcessingQueue] = useState(false);
   const [error, setError] = useState("");
@@ -187,6 +191,19 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     }
   }
 
+  async function handleDuplicate() {
+    setDuplicating(true);
+    setError("");
+    try {
+      const duplicated = await duplicateJob(params.jobId);
+      router.push(`/jobs/${duplicated.job_id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to duplicate evaluation job.");
+    } finally {
+      setDuplicating(false);
+    }
+  }
+
   async function copyReport() {
     if (!report?.markdown_report) return;
     await navigator.clipboard.writeText(report.markdown_report);
@@ -218,6 +235,9 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
         <div className="btn-row">
           <button className="btn btn-secondary" onClick={() => void loadAll()} type="button">
             Refresh
+          </button>
+          <button className="btn btn-secondary" disabled={duplicating} onClick={() => void handleDuplicate()} type="button">
+            {duplicating ? "Duplicating..." : "Duplicate Job"}
           </button>
           {canRunNow && (
             <button className="btn btn-primary" disabled={running} onClick={() => void handleRun()} type="button">

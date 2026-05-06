@@ -65,6 +65,10 @@ export function createJob(payload: Record<string, unknown>): Promise<EvaluationJ
   return apiRequest<EvaluationJob>("/evaluation-jobs", { method: "POST", body: payload });
 }
 
+export function duplicateJob(jobId: string): Promise<EvaluationJob> {
+  return apiRequest<EvaluationJob>(`/evaluation-jobs/${jobId}/duplicate`, { method: "POST" });
+}
+
 export function getJob(jobId: string): Promise<EvaluationJob> {
   return apiRequest<EvaluationJob>(`/evaluation-jobs/${jobId}`);
 }

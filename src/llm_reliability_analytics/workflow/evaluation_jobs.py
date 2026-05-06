@@ -108,6 +108,33 @@ def create_job(payload: EvaluationJobCreate) -> EvaluationJob:
     return create_evaluation_job(payload)
 
 
+def duplicate_job(job_id: str) -> EvaluationJob:
+    source = get_job(job_id)
+    payload = EvaluationJobCreate(
+        input_path=source.input_path,
+        provider=cast(Literal["mock", "ollama", "local"], source.provider),
+        model_name=source.model_name,
+        dataset_version=source.dataset_version,
+        evaluation_mode=cast(
+            Literal["regression", "exploratory", "adversarial", "trace_replay"],
+            source.evaluation_mode,
+        ),
+        oracle_profile=source.oracle_profile,
+        temperature=source.temperature,
+        max_output_tokens=source.max_output_tokens,
+        timeout_seconds=source.timeout_seconds,
+        repeat_count=source.repeat_count,
+        limit=source.limit,
+        notes=source.notes,
+        submitted_by=source.submitted_by,
+        team_name=source.team_name,
+        client_name=source.client_name,
+        project_name=source.project_name,
+    )
+    duplicated = create_evaluation_job(payload)
+    return duplicated
+
+
 def list_jobs(limit: int = 100, status: EvaluationJobStatus | None = None, offset: int = 0) -> EvaluationJobListResult:
     normalized_status = status.strip() if isinstance(status, str) else None
     if normalized_status not in {"draft", "queued", "running", "completed", "failed", "canceled"}:

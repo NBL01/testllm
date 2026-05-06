@@ -41,6 +41,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     EvaluationJobSummaryResult,
     EvaluationJobTracesResult,
     create_job,
+    duplicate_job,
     get_job_failed_cases,
     get_job_report_payload,
     get_job,
@@ -305,6 +306,14 @@ def candidate_events_endpoint(
 @router.post("/evaluation-jobs", response_model=EvaluationJob, status_code=201)
 def create_evaluation_job_endpoint(request: EvaluationJobCreate) -> EvaluationJob:
     return create_job(request)
+
+
+@router.post("/evaluation-jobs/{job_id}/duplicate", response_model=EvaluationJob, status_code=201)
+def duplicate_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
+    try:
+        return duplicate_job(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/evaluation-jobs", response_model=EvaluationJobListResponse)

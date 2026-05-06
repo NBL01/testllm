@@ -328,6 +328,50 @@ def test_evaluation_job_list_can_filter_by_status(monkeypatch, tmp_path) -> None
     assert len(all_page_two_payload["items"]) == 1
 
 
+def test_evaluation_job_can_be_duplicated_as_new_draft(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_duplicate.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/evaluation-jobs",
+        json={
+            "input_path": "sample_test_cases.jsonl",
+            "provider": "mock",
+            "model_name": "mock-baseline",
+            "evaluation_mode": "regression",
+            "oracle_profile": "default",
+            "repeat_count": 2,
+            "limit": 3,
+            "submitted_by": "qa-user",
+            "team_name": "reliability",
+            "client_name": "internal",
+            "project_name": "duplicate-check",
+        },
+    )
+    assert create_response.status_code == 201
+    original = create_response.json()
+
+    duplicate_response = client.post(f"/evaluation-jobs/{original['job_id']}/duplicate")
+    assert duplicate_response.status_code == 201
+    duplicated = duplicate_response.json()
+
+    assert duplicated["job_id"] != original["job_id"]
+    assert duplicated["status"] == "draft"
+    assert duplicated["linked_run_id"] is None
+    assert duplicated["input_path"] == original["input_path"]
+    assert duplicated["provider"] == original["provider"]
+    assert duplicated["model_name"] == original["model_name"]
+    assert duplicated["evaluation_mode"] == original["evaluation_mode"]
+    assert duplicated["oracle_profile"] == original["oracle_profile"]
+    assert duplicated["repeat_count"] == original["repeat_count"]
+    assert duplicated["limit"] == original["limit"]
+    assert duplicated["submitted_by"] == original["submitted_by"]
+    assert duplicated["team_name"] == original["team_name"]
+    assert duplicated["client_name"] == original["client_name"]
+    assert duplicated["project_name"] == original["project_name"]
+
+
 def test_evaluation_job_traces_can_filter_by_test_case_id(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "api_eval_jobs_trace_filter.duckdb"
     monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
