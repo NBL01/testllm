@@ -49,6 +49,7 @@ export function listJobs(params?: {
   offset?: number;
   sortBy?: "created_at" | "updated_at";
   sortOrder?: "asc" | "desc";
+  searchQuery?: string;
 }): Promise<EvaluationJobListResponse> {
   const query = new URLSearchParams();
   if (params?.status && params.status !== "all") {
@@ -65,6 +66,10 @@ export function listJobs(params?: {
   }
   if (params?.sortOrder) {
     query.set("sort_order", params.sortOrder);
+  }
+  const normalizedSearchQuery = (params?.searchQuery || "").trim();
+  if (normalizedSearchQuery) {
+    query.set("q", normalizedSearchQuery);
   }
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return apiRequest<EvaluationJobListResponse>(`/evaluation-jobs${suffix}`);

@@ -338,6 +338,7 @@ def list_evaluation_jobs_endpoint(
     offset: int = Query(default=0, ge=0),
     sort_by: Literal["created_at", "updated_at"] = Query(default="created_at"),
     sort_order: Literal["asc", "desc"] = Query(default="desc"),
+    q: str | None = Query(default=None),
 ) -> EvaluationJobListResponse:
     result: EvaluationJobListResult = list_jobs(
         limit=limit,
@@ -345,6 +346,7 @@ def list_evaluation_jobs_endpoint(
         offset=offset,
         sort_by=sort_by,
         sort_order=sort_order,
+        search_query=q,
     )
     return EvaluationJobListResponse(
         total=result.total,

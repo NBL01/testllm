@@ -334,6 +334,7 @@ def test_evaluation_job_list_can_filter_by_status(monkeypatch, tmp_path) -> None
             "oracle_profile": "default",
             "repeat_count": 1,
             "limit": 1,
+            "project_name": "alpha-project",
         },
     )
     second_create = client.post(
@@ -346,6 +347,7 @@ def test_evaluation_job_list_can_filter_by_status(monkeypatch, tmp_path) -> None
             "oracle_profile": "default",
             "repeat_count": 1,
             "limit": 1,
+            "project_name": "beta-project",
         },
     )
     assert first_create.status_code == 201
@@ -395,6 +397,12 @@ def test_evaluation_job_list_can_filter_by_status(monkeypatch, tmp_path) -> None
     updated_desc_payload = updated_desc_response.json()
     assert updated_desc_payload["total"] == 2
     assert updated_desc_payload["items"][0]["status"] == "queued"
+
+    search_response = client.get("/evaluation-jobs?q=beta")
+    assert search_response.status_code == 200
+    search_payload = search_response.json()
+    assert search_payload["total"] == 1
+    assert search_payload["items"][0]["project_name"] == "beta-project"
 
 
 def test_evaluation_job_can_be_duplicated_as_new_draft(monkeypatch, tmp_path) -> None:

@@ -193,95 +193,106 @@ def list_evaluation_jobs(
     offset: int = 0,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    search_query: str | None = None,
 ) -> list[EvaluationJob]:
     initialize_schema()
     conn = get_connection()
     effective_offset = max(0, int(offset))
     resolved_sort_by = "updated_at" if sort_by.strip().lower() == "updated_at" else "created_at"
     resolved_sort_order = "ASC" if sort_order.strip().lower() == "asc" else "DESC"
-    if status is None:
-        rows = conn.execute(
-            f"""
-            SELECT
-                job_id,
-                status,
-                input_path,
-                provider,
-                model_name,
-                dataset_version,
-                evaluation_mode,
-                oracle_profile,
-                temperature,
-                max_output_tokens,
-                timeout_seconds,
-                repeat_count,
-                test_case_limit,
-                notes,
-                submitted_by,
-                team_name,
-                client_name,
-                project_name,
-                linked_run_id,
-                failure_reason,
-                created_at,
-                started_at,
-                completed_at,
-                updated_at
-            FROM evaluation_jobs
-            ORDER BY {resolved_sort_by} {resolved_sort_order}
-            LIMIT ? OFFSET ?;
-            """,
-            [limit, effective_offset],
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            f"""
-            SELECT
-                job_id,
-                status,
-                input_path,
-                provider,
-                model_name,
-                dataset_version,
-                evaluation_mode,
-                oracle_profile,
-                temperature,
-                max_output_tokens,
-                timeout_seconds,
-                repeat_count,
-                test_case_limit,
-                notes,
-                submitted_by,
-                team_name,
-                client_name,
-                project_name,
-                linked_run_id,
-                failure_reason,
-                created_at,
-                started_at,
-                completed_at,
-                updated_at
-            FROM evaluation_jobs
-            WHERE status = ?
-            ORDER BY {resolved_sort_by} {resolved_sort_order}
-            LIMIT ? OFFSET ?;
-            """,
-            [status, limit, effective_offset],
-        ).fetchall()
+    normalized_search_query = (search_query or "").strip().lower()
+    search_term = f"%{normalized_search_query}%"
+    where_clauses: list[str] = []
+    params: list[object] = []
+    if status is not None:
+        where_clauses.append("status = ?")
+        params.append(status)
+    if normalized_search_query:
+        where_clauses.append(
+            """
+            (
+                LOWER(job_id) LIKE ?
+                OR LOWER(provider) LIKE ?
+                OR LOWER(model_name) LIKE ?
+                OR LOWER(COALESCE(dataset_version, '')) LIKE ?
+                OR LOWER(COALESCE(project_name, '')) LIKE ?
+                OR LOWER(COALESCE(client_name, '')) LIKE ?
+                OR LOWER(COALESCE(team_name, '')) LIKE ?
+                OR LOWER(COALESCE(submitted_by, '')) LIKE ?
+            )
+            """
+        )
+        params.extend([search_term] * 8)
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    rows = conn.execute(
+        f"""
+        SELECT
+            job_id,
+            status,
+            input_path,
+            provider,
+            model_name,
+            dataset_version,
+            evaluation_mode,
+            oracle_profile,
+            temperature,
+            max_output_tokens,
+            timeout_seconds,
+            repeat_count,
+            test_case_limit,
+            notes,
+            submitted_by,
+            team_name,
+            client_name,
+            project_name,
+            linked_run_id,
+            failure_reason,
+            created_at,
+            started_at,
+            completed_at,
+            updated_at
+        FROM evaluation_jobs
+        {where_sql}
+        ORDER BY {resolved_sort_by} {resolved_sort_order}
+        LIMIT ? OFFSET ?;
+        """,
+        [*params, limit, effective_offset],
+    ).fetchall()
     conn.close()
     return [_row_to_job(row) for row in rows]
 
 
-def count_evaluation_jobs(status: EvaluationJobStatus | None = None) -> int:
+def count_evaluation_jobs(status: EvaluationJobStatus | None = None, search_query: str | None = None) -> int:
     initialize_schema()
     conn = get_connection()
-    if status is None:
-        row = conn.execute("SELECT COUNT(*) FROM evaluation_jobs;").fetchone()
-    else:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM evaluation_jobs WHERE status = ?;",
-            [status],
-        ).fetchone()
+    normalized_search_query = (search_query or "").strip().lower()
+    search_term = f"%{normalized_search_query}%"
+    where_clauses: list[str] = []
+    params: list[object] = []
+    if status is not None:
+        where_clauses.append("status = ?")
+        params.append(status)
+    if normalized_search_query:
+        where_clauses.append(
+            """
+            (
+                LOWER(job_id) LIKE ?
+                OR LOWER(provider) LIKE ?
+                OR LOWER(model_name) LIKE ?
+                OR LOWER(COALESCE(dataset_version, '')) LIKE ?
+                OR LOWER(COALESCE(project_name, '')) LIKE ?
+                OR LOWER(COALESCE(client_name, '')) LIKE ?
+                OR LOWER(COALESCE(team_name, '')) LIKE ?
+                OR LOWER(COALESCE(submitted_by, '')) LIKE ?
+            )
+            """
+        )
+        params.extend([search_term] * 8)
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM evaluation_jobs {where_sql};",
+        params,
+    ).fetchone()
     conn.close()
     return int((row or [0])[0] or 0)
 

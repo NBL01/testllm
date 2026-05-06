@@ -168,6 +168,7 @@ def list_jobs(
     offset: int = 0,
     sort_by: str = "created_at",
     sort_order: str = "desc",
+    search_query: str | None = None,
 ) -> EvaluationJobListResult:
     normalized_status = status.strip() if isinstance(status, str) else None
     if normalized_status not in {"draft", "queued", "running", "completed", "failed", "canceled"}:
@@ -186,8 +187,9 @@ def list_jobs(
         offset=effective_offset,
         sort_by=normalized_sort_by,
         sort_order=normalized_sort_order,
+        search_query=search_query,
     )
-    total = count_evaluation_jobs(status=normalized)
+    total = count_evaluation_jobs(status=normalized, search_query=search_query)
     return EvaluationJobListResult(
         total=total,
         limit=limit,

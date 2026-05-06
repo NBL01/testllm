@@ -17,6 +17,8 @@ export default function JobsPage() {
   const [jobs, setJobs] = useState<EvaluationJob[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStatsResult | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [searchInput, setSearchInput] = useState("");
+  const [searchFilter, setSearchFilter] = useState("");
   const [sortBy, setSortBy] = useState<"created_at" | "updated_at">("created_at");
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
   const [totalJobs, setTotalJobs] = useState(0);
@@ -36,7 +38,8 @@ export default function JobsPage() {
           limit: jobsPageSize,
           offset: jobsOffset,
           sortBy,
-          sortOrder
+          sortOrder,
+          searchQuery: searchFilter
         }),
         getQueueStats()
       ]);
@@ -65,7 +68,7 @@ export default function JobsPage() {
 
   useEffect(() => {
     void load();
-  }, [statusFilter, jobsOffset, sortBy, sortOrder]);
+  }, [statusFilter, jobsOffset, sortBy, sortOrder, searchFilter]);
 
   useEffect(() => {
     setJobsOffset(0);
@@ -76,13 +79,17 @@ export default function JobsPage() {
   }, [sortBy, sortOrder]);
 
   useEffect(() => {
+    setJobsOffset(0);
+  }, [searchFilter]);
+
+  useEffect(() => {
     if (!queueStats) return;
     if (queueStats.by_status.queued <= 0 && queueStats.by_status.running <= 0) return;
     const timer = window.setInterval(() => {
       void load();
     }, 3000);
     return () => window.clearInterval(timer);
-  }, [queueStats?.by_status.queued, queueStats?.by_status.running, statusFilter, jobsOffset, sortBy, sortOrder]);
+  }, [queueStats?.by_status.queued, queueStats?.by_status.running, statusFilter, jobsOffset, sortBy, sortOrder, searchFilter]);
 
   const canPrevious = jobsOffset > 0;
   const canNext = jobsOffset + jobs.length < totalJobs;
@@ -112,6 +119,32 @@ export default function JobsPage() {
       <section className="panel">
         <div className="btn-row" style={{ marginBottom: "0.8rem" }}>
           <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+            Search
+            <input
+              className="input"
+              placeholder="project/client/team/model/job id"
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+            />
+          </label>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setSearchFilter(searchInput.trim())}
+            type="button"
+          >
+            Apply Search
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              setSearchInput("");
+              setSearchFilter("");
+            }}
+            type="button"
+          >
+            Clear Search
+          </button>
+          <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
             Status filter
             <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
               <option value="all">all</option>
@@ -138,6 +171,7 @@ export default function JobsPage() {
             </select>
           </label>
         </div>
+        {searchFilter && <p className="meta">Search: <code>{searchFilter}</code></p>}
         <p className="meta">
           Showing {showingFrom}-{showingTo} of {totalJobs}
         </p>
