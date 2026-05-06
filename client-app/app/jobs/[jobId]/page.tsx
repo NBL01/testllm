@@ -13,6 +13,7 @@ import {
   getJobTraces,
   processQueue,
   queueJob,
+  retryJob,
   runJob
 } from "@/lib/api";
 import type {
@@ -53,6 +54,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   const [running, setRunning] = useState(false);
   const [queueing, setQueueing] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const [processingQueue, setProcessingQueue] = useState(false);
   const [error, setError] = useState("");
@@ -204,6 +206,19 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     }
   }
 
+  async function handleRetryQueued() {
+    setRetrying(true);
+    setError("");
+    try {
+      const retried = await retryJob(params.jobId, true);
+      router.push(`/jobs/${retried.job_id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to retry evaluation job.");
+    } finally {
+      setRetrying(false);
+    }
+  }
+
   async function copyReport() {
     if (!report?.markdown_report) return;
     await navigator.clipboard.writeText(report.markdown_report);
@@ -238,6 +253,9 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
           </button>
           <button className="btn btn-secondary" disabled={duplicating} onClick={() => void handleDuplicate()} type="button">
             {duplicating ? "Duplicating..." : "Duplicate Job"}
+          </button>
+          <button className="btn btn-secondary" disabled={retrying} onClick={() => void handleRetryQueued()} type="button">
+            {retrying ? "Retrying..." : "Retry + Queue"}
           </button>
           {canRunNow && (
             <button className="btn btn-primary" disabled={running} onClick={() => void handleRun()} type="button">

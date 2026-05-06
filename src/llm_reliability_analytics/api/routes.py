@@ -40,6 +40,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     EvaluationJobRunResult,
     EvaluationJobSummaryResult,
     EvaluationJobTracesResult,
+    EvaluationJobRetryRequest,
     create_job,
     duplicate_job,
     get_job_failed_cases,
@@ -49,6 +50,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     get_job_traces,
     list_jobs,
     process_queued_jobs,
+    retry_job,
     cancel_job,
     queue_stats,
     queue_job,
@@ -312,6 +314,14 @@ def create_evaluation_job_endpoint(request: EvaluationJobCreate) -> EvaluationJo
 def duplicate_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
     try:
         return duplicate_job(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/evaluation-jobs/{job_id}/retry", response_model=EvaluationJob, status_code=201)
+def retry_evaluation_job_endpoint(job_id: str, request: EvaluationJobRetryRequest) -> EvaluationJob:
+    try:
+        return retry_job(job_id=job_id, queue=request.queue)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

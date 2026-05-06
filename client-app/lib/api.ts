@@ -69,6 +69,13 @@ export function duplicateJob(jobId: string): Promise<EvaluationJob> {
   return apiRequest<EvaluationJob>(`/evaluation-jobs/${jobId}/duplicate`, { method: "POST" });
 }
 
+export function retryJob(jobId: string, queue = true): Promise<EvaluationJob> {
+  return apiRequest<EvaluationJob>(`/evaluation-jobs/${jobId}/retry`, {
+    method: "POST",
+    body: { queue }
+  });
+}
+
 export function getJob(jobId: string): Promise<EvaluationJob> {
   return apiRequest<EvaluationJob>(`/evaluation-jobs/${jobId}`);
 }

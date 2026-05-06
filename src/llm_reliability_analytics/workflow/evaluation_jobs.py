@@ -50,6 +50,10 @@ class EvaluationJobCancelRequest(BaseModel):
     reason: str = ""
 
 
+class EvaluationJobRetryRequest(BaseModel):
+    queue: bool = False
+
+
 class EvaluationJobListResult(BaseModel):
     total: int
     limit: int
@@ -132,6 +136,16 @@ def duplicate_job(job_id: str) -> EvaluationJob:
         project_name=source.project_name,
     )
     duplicated = create_evaluation_job(payload)
+    return duplicated
+
+
+def retry_job(job_id: str, queue: bool = False) -> EvaluationJob:
+    duplicated = duplicate_job(job_id)
+    if queue:
+        queued = update_evaluation_job(duplicated.job_id, status="queued")
+        if queued is None:
+            raise EvaluationJobNotFoundError(f"Evaluation job not found after retry queue update: {duplicated.job_id}")
+        return queued
     return duplicated
 
 

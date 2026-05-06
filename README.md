@@ -226,6 +226,7 @@ python scripts/run_batch.py \
 - `GET /candidates/{candidate_id}/events`
 - `POST /evaluation-jobs`
 - `POST /evaluation-jobs/{job_id}/duplicate`
+- `POST /evaluation-jobs/{job_id}/retry`
 - `GET /evaluation-jobs`
 - `GET /evaluation-jobs/options`
 - `GET /evaluation-jobs/{job_id}`

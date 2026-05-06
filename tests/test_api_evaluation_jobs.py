@@ -372,6 +372,43 @@ def test_evaluation_job_can_be_duplicated_as_new_draft(monkeypatch, tmp_path) ->
     assert duplicated["project_name"] == original["project_name"]
 
 
+def test_evaluation_job_retry_creates_new_queued_job(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_retry.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/evaluation-jobs",
+        json={
+            "input_path": "sample_test_cases.jsonl",
+            "provider": "mock",
+            "model_name": "mock-baseline",
+            "evaluation_mode": "regression",
+            "oracle_profile": "default",
+            "repeat_count": 1,
+            "limit": 2,
+            "project_name": "retry-source",
+        },
+    )
+    assert create_response.status_code == 201
+    source_job = create_response.json()
+
+    run_response = client.post(f"/evaluation-jobs/{source_job['job_id']}/run")
+    assert run_response.status_code == 200
+
+    retry_response = client.post(
+        f"/evaluation-jobs/{source_job['job_id']}/retry",
+        json={"queue": True},
+    )
+    assert retry_response.status_code == 201
+    retried = retry_response.json()
+    assert retried["job_id"] != source_job["job_id"]
+    assert retried["status"] == "queued"
+    assert retried["linked_run_id"] is None
+    assert retried["project_name"] == source_job["project_name"]
+    assert retried["input_path"] == source_job["input_path"]
+
+
 def test_evaluation_job_traces_can_filter_by_test_case_id(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "api_eval_jobs_trace_filter.duckdb"
     monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
