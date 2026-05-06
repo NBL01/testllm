@@ -69,6 +69,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   const [report, setReport] = useState<JobReportPayload | null>(null);
   const [traceCaseInput, setTraceCaseInput] = useState("");
   const [traceCaseFilter, setTraceCaseFilter] = useState("");
+  const [onlyFailedTraces, setOnlyFailedTraces] = useState(true);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [queueing, setQueueing] = useState(false);
@@ -119,7 +120,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
           getJobTraces(params.jobId, {
             limit: tracesPageSize,
             offset: tracesOffset,
-            onlyFailed: true,
+            onlyFailed: onlyFailedTraces,
             testCaseId: normalizedCaseFilter || undefined
           }),
           getJobReport(params.jobId)
@@ -148,7 +149,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   useEffect(() => {
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.jobId, traceCaseFilter, failedOffset, tracesOffset]);
+  }, [params.jobId, traceCaseFilter, onlyFailedTraces, failedOffset, tracesOffset]);
 
   useEffect(() => {
     if (!job || !["queued", "running"].includes(job.status)) return;
@@ -563,6 +564,17 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                   value={traceCaseInput}
                   onChange={(event) => setTraceCaseInput(event.target.value)}
                 />
+              </label>
+              <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
+                <input
+                  type="checkbox"
+                  checked={onlyFailedTraces}
+                  onChange={(event) => {
+                    setOnlyFailedTraces(event.target.checked);
+                    setTracesOffset(0);
+                  }}
+                />
+                failed only
               </label>
               <button
                 className="btn btn-secondary"
