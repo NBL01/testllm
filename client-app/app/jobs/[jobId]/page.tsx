@@ -38,6 +38,24 @@ function asPct(value: number | undefined): string {
   return `${(value * 100).toFixed(2)}%`;
 }
 
+function asDate(value: string | null): string {
+  if (!value) return "n/a";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
+}
+
+function asDuration(startedAt: string | null, completedAt: string | null): string {
+  if (!startedAt || !completedAt) return "n/a";
+  const started = new Date(startedAt).getTime();
+  const completed = new Date(completedAt).getTime();
+  if (Number.isNaN(started) || Number.isNaN(completed) || completed < started) return "n/a";
+  const totalSeconds = Math.floor((completed - started) / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
 export default function JobDetailPage({ params }: { params: { jobId: string } }) {
   const router = useRouter();
   const [job, setJob] = useState<EvaluationJob | null>(null);
@@ -349,6 +367,26 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
               <div>
                 <strong>Project</strong>
                 <div className="meta">{job.project_name || "n/a"}</div>
+              </div>
+              <div>
+                <strong>Submitted at</strong>
+                <div className="meta">{asDate(job.created_at)}</div>
+              </div>
+              <div>
+                <strong>Started at</strong>
+                <div className="meta">{asDate(job.started_at)}</div>
+              </div>
+              <div>
+                <strong>Completed at</strong>
+                <div className="meta">{asDate(job.completed_at)}</div>
+              </div>
+              <div>
+                <strong>Last updated</strong>
+                <div className="meta">{asDate(job.updated_at)}</div>
+              </div>
+              <div>
+                <strong>Run duration</strong>
+                <div className="meta">{asDuration(job.started_at, job.completed_at)}</div>
               </div>
             </div>
             {job.failure_reason && <p className="error">Failure reason: {job.failure_reason}</p>}

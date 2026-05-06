@@ -75,6 +75,8 @@ def test_evaluation_job_run_links_test_run(monkeypatch, tmp_path) -> None:
     assert run_payload["job"]["job_id"] == job_id
     assert run_payload["job"]["status"] == "completed"
     assert run_payload["job"]["linked_run_id"] is not None
+    assert run_payload["job"]["started_at"] is not None
+    assert run_payload["job"]["completed_at"] is not None
     assert run_payload["result"]["loaded_test_cases"] == 3
     assert run_payload["result"]["executed_test_cases"] == 3
 
@@ -83,6 +85,8 @@ def test_evaluation_job_run_links_test_run(monkeypatch, tmp_path) -> None:
     get_payload = get_response.json()
     assert get_payload["status"] == "completed"
     assert get_payload["linked_run_id"] == run_payload["job"]["linked_run_id"]
+    assert get_payload["started_at"] is not None
+    assert get_payload["completed_at"] is not None
 
     rerun_response = client.post(f"/evaluation-jobs/{job_id}/run")
     assert rerun_response.status_code == 400
@@ -298,6 +302,7 @@ def test_evaluation_job_cancel_from_draft_and_queue_blocked(monkeypatch, tmp_pat
     cancel_payload = cancel_response.json()
     assert cancel_payload["status"] == "canceled"
     assert "dataset selected by mistake" in (cancel_payload["failure_reason"] or "")
+    assert cancel_payload["completed_at"] is not None
 
     queue_response = client.post(f"/evaluation-jobs/{job_id}/queue")
     assert queue_response.status_code == 400
