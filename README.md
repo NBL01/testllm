@@ -238,6 +238,11 @@ python scripts/run_batch.py \
 - `GET /evaluation-jobs/{job_id}/traces`
 - `GET /evaluation-jobs/{job_id}/report`
 
+Pagination query params supported:
+- `GET /evaluation-jobs?limit=<n>&offset=<n>&status=<status>`
+- `GET /evaluation-jobs/{job_id}/failed-cases?limit=<n>&offset=<n>`
+- `GET /evaluation-jobs/{job_id}/traces?limit=<n>&offset=<n>&only_failed=true|false&test_case_id=<case_id>`
+
 `GET /evaluation-jobs/{job_id}/traces` supports optional query filters:
 - `only_failed=true|false`
 - `test_case_id=<case_id>`

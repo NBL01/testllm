@@ -14,13 +14,14 @@ from llm_reliability_analytics.storage.evaluation_job_repository import (
     EvaluationJob,
     EvaluationJobCreate,
     EvaluationJobStatus,
+    count_evaluation_jobs,
     create_evaluation_job,
     evaluation_job_status_counts,
     get_evaluation_job,
     list_evaluation_jobs,
     update_evaluation_job,
 )
-from llm_reliability_analytics.storage.trace_repository import fetch_traces
+from llm_reliability_analytics.storage.trace_repository import fetch_traces_page
 from llm_reliability_analytics.workflow.service import (
     RunBatchWorkflowResult,
     RunReportResult,
@@ -47,6 +48,13 @@ class EvaluationJobQueueStatsResult(BaseModel):
 
 class EvaluationJobCancelRequest(BaseModel):
     reason: str = ""
+
+
+class EvaluationJobListResult(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[EvaluationJob]
 
 
 class EvaluationJobSummaryResult(BaseModel):
@@ -78,6 +86,20 @@ class EvaluationJobReportPayload(BaseModel):
     report: ReliabilityReport
 
 
+class EvaluationJobFailedCasesResult(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[EvaluationJobFailedCase]
+
+
+class EvaluationJobTracesResult(BaseModel):
+    total: int
+    limit: int
+    offset: int
+    items: list[dict[str, Any]]
+
+
 class EvaluationJobNotFoundError(ValueError):
     """Raised when a requested job does not exist."""
 
@@ -86,11 +108,20 @@ def create_job(payload: EvaluationJobCreate) -> EvaluationJob:
     return create_evaluation_job(payload)
 
 
-def list_jobs(limit: int = 100, status: EvaluationJobStatus | None = None) -> list[EvaluationJob]:
+def list_jobs(limit: int = 100, status: EvaluationJobStatus | None = None, offset: int = 0) -> EvaluationJobListResult:
     normalized_status = status.strip() if isinstance(status, str) else None
     if normalized_status not in {"draft", "queued", "running", "completed", "failed", "canceled"}:
         normalized_status = None
-    return list_evaluation_jobs(limit=limit, status=cast(EvaluationJobStatus | None, normalized_status))
+    effective_offset = max(0, int(offset))
+    normalized = cast(EvaluationJobStatus | None, normalized_status)
+    items = list_evaluation_jobs(limit=limit, status=normalized, offset=effective_offset)
+    total = count_evaluation_jobs(status=normalized)
+    return EvaluationJobListResult(
+        total=total,
+        limit=limit,
+        offset=effective_offset,
+        items=items,
+    )
 
 
 def get_job(job_id: str) -> EvaluationJob:
@@ -230,16 +261,18 @@ def get_job_summary(job_id: str) -> EvaluationJobSummaryResult:
     )
 
 
-def get_job_failed_cases(job_id: str, limit: int = 200) -> list[EvaluationJobFailedCase]:
+def get_job_failed_cases(job_id: str, limit: int = 200, offset: int = 0) -> EvaluationJobFailedCasesResult:
     job = get_job(job_id)
     run_id = _require_run_id(job)
+    effective_offset = max(0, int(offset))
     results = fetch_results_for_run(run_id)
     failed = [result for result in results if not result.is_correct]
     failed_sorted = sorted(
         failed,
         key=lambda result: (result.score, result.latency_ms, result.test_case_id, result.attempt_index),
-    )[:limit]
-    return [
+    )
+    paged = failed_sorted[effective_offset : effective_offset + limit]
+    items = [
         EvaluationJobFailedCase(
             test_case_id=result.test_case_id,
             attempt_index=result.attempt_index,
@@ -254,24 +287,39 @@ def get_job_failed_cases(job_id: str, limit: int = 200) -> list[EvaluationJobFai
             explanation=result.explanation,
             latency_ms=result.latency_ms,
         )
-        for result in failed_sorted
+        for result in paged
     ]
+    return EvaluationJobFailedCasesResult(
+        total=len(failed_sorted),
+        limit=limit,
+        offset=effective_offset,
+        items=items,
+    )
 
 
 def get_job_traces(
     job_id: str,
     limit: int = 200,
+    offset: int = 0,
     only_failed: bool = True,
     test_case_id: str | None = None,
-) -> list[dict[str, Any]]:
+) -> EvaluationJobTracesResult:
     job = get_job(job_id)
     run_id = _require_run_id(job)
     normalized_test_case_id = (test_case_id or "").strip() or None
-    return fetch_traces(
+    effective_offset = max(0, int(offset))
+    total, items = fetch_traces_page(
         run_id=run_id,
         only_failed=only_failed,
         test_case_id=normalized_test_case_id,
         max_rows=limit,
+        offset=effective_offset,
+    )
+    return EvaluationJobTracesResult(
+        total=total,
+        limit=limit,
+        offset=effective_offset,
+        items=items,
     )
 
 

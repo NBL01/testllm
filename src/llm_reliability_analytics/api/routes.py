@@ -31,12 +31,15 @@ from llm_reliability_analytics.test_authoring.service import CandidateAuthoringS
 from llm_reliability_analytics.workflow.evaluation_jobs import (
     EvaluationJobCancelRequest,
     EvaluationJobFailedCase,
+    EvaluationJobFailedCasesResult,
+    EvaluationJobListResult,
     EvaluationJobNotFoundError,
     EvaluationJobQueueProcessResult,
     EvaluationJobQueueStatsResult,
     EvaluationJobReportPayload,
     EvaluationJobRunResult,
     EvaluationJobSummaryResult,
+    EvaluationJobTracesResult,
     create_job,
     get_job_failed_cases,
     get_job_report_payload,
@@ -156,16 +159,22 @@ class CandidateEventsResponse(BaseModel):
 
 class EvaluationJobListResponse(BaseModel):
     total: int
+    limit: int
+    offset: int
     items: list[EvaluationJob]
 
 
 class EvaluationJobFailedCasesResponse(BaseModel):
     total: int
+    limit: int
+    offset: int
     items: list[EvaluationJobFailedCase]
 
 
 class EvaluationJobTracesResponse(BaseModel):
     total: int
+    limit: int
+    offset: int
     items: list[dict[str, Any]]
 
 
@@ -302,9 +311,15 @@ def create_evaluation_job_endpoint(request: EvaluationJobCreate) -> EvaluationJo
 def list_evaluation_jobs_endpoint(
     status: EvaluationJobStatus | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
 ) -> EvaluationJobListResponse:
-    items = list_jobs(limit=limit, status=status)
-    return EvaluationJobListResponse(total=len(items), items=items)
+    result: EvaluationJobListResult = list_jobs(limit=limit, status=status, offset=offset)
+    return EvaluationJobListResponse(
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        items=result.items,
+    )
 
 
 @router.get("/evaluation-jobs/options", response_model=EvaluationJobOptionsResponse)
@@ -402,30 +417,48 @@ def evaluation_job_summary_endpoint(job_id: str) -> EvaluationJobSummaryResult:
 def evaluation_job_failed_cases_endpoint(
     job_id: str,
     limit: int = Query(default=200, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
 ) -> EvaluationJobFailedCasesResponse:
     try:
-        items = get_job_failed_cases(job_id, limit=limit)
+        result: EvaluationJobFailedCasesResult = get_job_failed_cases(job_id, limit=limit, offset=offset)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return EvaluationJobFailedCasesResponse(total=len(items), items=items)
+    return EvaluationJobFailedCasesResponse(
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        items=result.items,
+    )
 
 
 @router.get("/evaluation-jobs/{job_id}/traces", response_model=EvaluationJobTracesResponse)
 def evaluation_job_traces_endpoint(
     job_id: str,
     limit: int = Query(default=200, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
     only_failed: bool = Query(default=True),
     test_case_id: str | None = Query(default=None),
 ) -> EvaluationJobTracesResponse:
     try:
-        items = get_job_traces(job_id, limit=limit, only_failed=only_failed, test_case_id=test_case_id)
+        result: EvaluationJobTracesResult = get_job_traces(
+            job_id,
+            limit=limit,
+            offset=offset,
+            only_failed=only_failed,
+            test_case_id=test_case_id,
+        )
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return EvaluationJobTracesResponse(total=len(items), items=items)
+    return EvaluationJobTracesResponse(
+        total=result.total,
+        limit=result.limit,
+        offset=result.offset,
+        items=result.items,
+    )
 
 
 @router.get("/evaluation-jobs/{job_id}/report", response_model=EvaluationJobReportPayload)

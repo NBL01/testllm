@@ -37,6 +37,7 @@ def test_evaluation_job_create_list_and_get(monkeypatch, tmp_path) -> None:
     assert list_response.status_code == 200
     list_payload = list_response.json()
     assert list_payload["total"] == 1
+    assert list_payload["offset"] == 0
     assert list_payload["items"][0]["job_id"] == job_id
 
     get_response = client.get(f"/evaluation-jobs/{job_id}")
@@ -96,6 +97,7 @@ def test_evaluation_job_run_links_test_run(monkeypatch, tmp_path) -> None:
     assert failed_cases_response.status_code == 200
     failed_cases_payload = failed_cases_response.json()
     assert failed_cases_payload["total"] >= 0
+    assert failed_cases_payload["offset"] == 0
     for item in failed_cases_payload["items"]:
         assert item["is_correct"] is False
 
@@ -103,6 +105,7 @@ def test_evaluation_job_run_links_test_run(monkeypatch, tmp_path) -> None:
     assert traces_response.status_code == 200
     traces_payload = traces_response.json()
     assert traces_payload["total"] >= 0
+    assert traces_payload["offset"] == 0
     for item in traces_payload["items"]:
         assert item["run_id"] == run_payload["job"]["linked_run_id"]
         assert item["is_correct"] is False
@@ -308,6 +311,22 @@ def test_evaluation_job_list_can_filter_by_status(monkeypatch, tmp_path) -> None
     assert draft_payload["total"] == 1
     assert draft_payload["items"][0]["status"] == "draft"
 
+    all_page_one_response = client.get("/evaluation-jobs?limit=1&offset=0")
+    assert all_page_one_response.status_code == 200
+    all_page_one_payload = all_page_one_response.json()
+    assert all_page_one_payload["total"] == 2
+    assert all_page_one_payload["limit"] == 1
+    assert all_page_one_payload["offset"] == 0
+    assert len(all_page_one_payload["items"]) == 1
+
+    all_page_two_response = client.get("/evaluation-jobs?limit=1&offset=1")
+    assert all_page_two_response.status_code == 200
+    all_page_two_payload = all_page_two_response.json()
+    assert all_page_two_payload["total"] == 2
+    assert all_page_two_payload["limit"] == 1
+    assert all_page_two_payload["offset"] == 1
+    assert len(all_page_two_payload["items"]) == 1
+
 
 def test_evaluation_job_traces_can_filter_by_test_case_id(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "api_eval_jobs_trace_filter.duckdb"
@@ -345,3 +364,13 @@ def test_evaluation_job_traces_can_filter_by_test_case_id(monkeypatch, tmp_path)
     filtered_payload = filtered_response.json()
     assert filtered_payload["total"] > 0
     assert all(item["test_case_id"] == target_test_case_id for item in filtered_payload["items"])
+
+    paged_filtered_response = client.get(
+        f"/evaluation-jobs/{job_id}/traces?limit=1&offset=0&only_failed=false&test_case_id={target_test_case_id}"
+    )
+    assert paged_filtered_response.status_code == 200
+    paged_filtered_payload = paged_filtered_response.json()
+    assert paged_filtered_payload["limit"] == 1
+    assert paged_filtered_payload["offset"] == 0
+    assert paged_filtered_payload["total"] >= 1
+    assert len(paged_filtered_payload["items"]) == 1

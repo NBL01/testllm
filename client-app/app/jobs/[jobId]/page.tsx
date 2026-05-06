@@ -38,7 +38,11 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   const [job, setJob] = useState<EvaluationJob | null>(null);
   const [summary, setSummary] = useState<JobSummaryResult | null>(null);
   const [failedCases, setFailedCases] = useState<FailedCase[]>([]);
+  const [failedTotal, setFailedTotal] = useState(0);
+  const [failedOffset, setFailedOffset] = useState(0);
   const [traces, setTraces] = useState<TraceRecord[]>([]);
+  const [tracesTotal, setTracesTotal] = useState(0);
+  const [tracesOffset, setTracesOffset] = useState(0);
   const [report, setReport] = useState<JobReportPayload | null>(null);
   const [traceCaseInput, setTraceCaseInput] = useState("");
   const [traceCaseFilter, setTraceCaseFilter] = useState("");
@@ -49,6 +53,8 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   const [processingQueue, setProcessingQueue] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const failedPageSize = 20;
+  const tracesPageSize = 20;
 
   const canRunNow = useMemo(() => {
     if (!job) return false;
@@ -81,9 +87,13 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
         const normalizedCaseFilter = (activeTraceCaseFilter ?? traceCaseFilter).trim();
         const [summaryData, failedData, tracesData, reportData] = await Promise.all([
           getJobSummary(params.jobId),
-          getJobFailedCases(params.jobId, 100),
+          getJobFailedCases(params.jobId, {
+            limit: failedPageSize,
+            offset: failedOffset
+          }),
           getJobTraces(params.jobId, {
-            limit: 100,
+            limit: tracesPageSize,
+            offset: tracesOffset,
             onlyFailed: true,
             testCaseId: normalizedCaseFilter || undefined
           }),
@@ -91,12 +101,16 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
         ]);
         setSummary(summaryData);
         setFailedCases(failedData.items);
+        setFailedTotal(failedData.total);
         setTraces(tracesData.items);
+        setTracesTotal(tracesData.total);
         setReport(reportData);
       } else {
         setSummary(null);
         setFailedCases([]);
+        setFailedTotal(0);
         setTraces([]);
+        setTracesTotal(0);
         setReport(null);
       }
     } catch (err) {
@@ -109,7 +123,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
   useEffect(() => {
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.jobId, traceCaseFilter]);
+  }, [params.jobId, traceCaseFilter, failedOffset, tracesOffset]);
 
   useEffect(() => {
     if (!job || !["queued", "running"].includes(job.status)) return;
@@ -315,7 +329,28 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
           )}
 
           <section className="panel">
-            <h2>Failed Cases ({failedCases.length})</h2>
+            <h2>Failed Cases ({failedTotal})</h2>
+            <p className="meta">
+              Showing {failedTotal === 0 ? 0 : failedOffset + 1}-{failedOffset + failedCases.length} of {failedTotal}
+            </p>
+            <div className="btn-row" style={{ marginBottom: "0.6rem" }}>
+              <button
+                className="btn btn-secondary"
+                disabled={loading || failedOffset === 0}
+                onClick={() => setFailedOffset((prev) => Math.max(0, prev - failedPageSize))}
+                type="button"
+              >
+                Previous
+              </button>
+              <button
+                className="btn btn-secondary"
+                disabled={loading || failedOffset + failedCases.length >= failedTotal}
+                onClick={() => setFailedOffset((prev) => prev + failedPageSize)}
+                type="button"
+              >
+                Next
+              </button>
+            </div>
             {failedCases.length === 0 ? (
               <p className="meta">No failed cases found for this job.</p>
             ) : (
@@ -348,6 +383,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                             onClick={() => {
                               setTraceCaseInput(item.test_case_id);
                               setTraceCaseFilter(item.test_case_id);
+                              setTracesOffset(0);
                             }}
                             type="button"
                           >
@@ -363,7 +399,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
           </section>
 
           <section className="panel">
-            <h2>Oracle Traces ({traces.length})</h2>
+            <h2>Oracle Traces ({tracesTotal})</h2>
             <div className="btn-row" style={{ marginBottom: "0.6rem" }}>
               <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
                 Filter case
@@ -374,7 +410,14 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                   onChange={(event) => setTraceCaseInput(event.target.value)}
                 />
               </label>
-              <button className="btn btn-secondary" onClick={() => setTraceCaseFilter(traceCaseInput.trim())} type="button">
+              <button
+                className="btn btn-secondary"
+                onClick={() => {
+                  setTraceCaseFilter(traceCaseInput.trim());
+                  setTracesOffset(0);
+                }}
+                type="button"
+              >
                 Apply Filter
               </button>
               <button
@@ -382,6 +425,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                 onClick={() => {
                   setTraceCaseInput("");
                   setTraceCaseFilter("");
+                  setTracesOffset(0);
                 }}
                 type="button"
               >
@@ -389,6 +433,27 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
               </button>
             </div>
             {traceCaseFilter && <p className="meta">Active filter: <code>{traceCaseFilter}</code></p>}
+            <p className="meta">
+              Showing {tracesTotal === 0 ? 0 : tracesOffset + 1}-{tracesOffset + traces.length} of {tracesTotal}
+            </p>
+            <div className="btn-row" style={{ marginBottom: "0.6rem" }}>
+              <button
+                className="btn btn-secondary"
+                disabled={loading || tracesOffset === 0}
+                onClick={() => setTracesOffset((prev) => Math.max(0, prev - tracesPageSize))}
+                type="button"
+              >
+                Previous
+              </button>
+              <button
+                className="btn btn-secondary"
+                disabled={loading || tracesOffset + traces.length >= tracesTotal}
+                onClick={() => setTracesOffset((prev) => prev + tracesPageSize)}
+                type="button"
+              >
+                Next
+              </button>
+            </div>
             {traces.length === 0 ? (
               <p className="meta">No traces available yet.</p>
             ) : (
@@ -403,7 +468,7 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                     </tr>
                   </thead>
                   <tbody>
-                    {traces.slice(0, 20).map((trace) => (
+                    {traces.map((trace) => (
                       <tr key={trace.trace_id}>
                         <td>
                           <code>{trace.trace_id}</code>

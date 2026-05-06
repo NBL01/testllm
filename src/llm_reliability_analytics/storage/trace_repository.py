@@ -72,6 +72,26 @@ def fetch_traces(
     only_failed: bool = False,
     max_rows: int = 500,
 ) -> list[dict[str, Any]]:
+    total, items = fetch_traces_page(
+        run_id=run_id,
+        category=category,
+        test_case_id=test_case_id,
+        only_failed=only_failed,
+        max_rows=max_rows,
+        offset=0,
+    )
+    _ = total
+    return items
+
+
+def fetch_traces_page(
+    run_id: str | None = None,
+    category: str | None = None,
+    test_case_id: str | None = None,
+    only_failed: bool = False,
+    max_rows: int = 500,
+    offset: int = 0,
+) -> tuple[int, list[dict[str, Any]]]:
     initialize_schema()
     conn = get_connection()
     conditions: list[str] = []
@@ -90,6 +110,13 @@ def fetch_traces(
         conditions.append("is_correct = FALSE")
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    total_row = conn.execute(
+        f"SELECT COUNT(*) FROM evaluation_traces {where_clause};",
+        params,
+    ).fetchone()
+    total = int((total_row or [0])[0] or 0)
+
+    effective_offset = max(0, int(offset))
     rows = conn.execute(
         f"""
         SELECT
@@ -111,13 +138,13 @@ def fetch_traces(
         FROM evaluation_traces
         {where_clause}
         ORDER BY created_at DESC
-        LIMIT ?;
+        LIMIT ? OFFSET ?;
         """,
-        [*params, max_rows],
+        [*params, max_rows, effective_offset],
     ).fetchall()
     conn.close()
 
-    return [
+    items = [
         {
             "trace_id": row[0],
             "run_id": row[1],
@@ -137,3 +164,4 @@ def fetch_traces(
         }
         for row in rows
     ]
+    return total, items

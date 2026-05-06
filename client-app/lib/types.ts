@@ -29,6 +29,8 @@ export type EvaluationJob = {
 
 export type EvaluationJobListResponse = {
   total: number;
+  limit: number;
+  offset: number;
   items: EvaluationJob[];
 };
 
@@ -91,6 +93,8 @@ export type FailedCase = {
 
 export type FailedCasesResponse = {
   total: number;
+  limit: number;
+  offset: number;
   items: FailedCase[];
 };
 
@@ -114,6 +118,8 @@ export type TraceRecord = {
 
 export type TracesResponse = {
   total: number;
+  limit: number;
+  offset: number;
   items: TraceRecord[];
 };
 

@@ -17,16 +17,23 @@ export default function JobsPage() {
   const [jobs, setJobs] = useState<EvaluationJob[]>([]);
   const [queueStats, setQueueStats] = useState<QueueStatsResult | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [totalJobs, setTotalJobs] = useState(0);
+  const [jobsOffset, setJobsOffset] = useState(0);
   const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const jobsPageSize = 25;
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      const [response, stats] = await Promise.all([listJobs({ status: statusFilter, limit: 300 }), getQueueStats()]);
+      const [response, stats] = await Promise.all([
+        listJobs({ status: statusFilter, limit: jobsPageSize, offset: jobsOffset }),
+        getQueueStats()
+      ]);
       setJobs(response.items);
+      setTotalJobs(response.total);
       setQueueStats(stats);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load jobs.");
@@ -50,7 +57,16 @@ export default function JobsPage() {
 
   useEffect(() => {
     void load();
+  }, [statusFilter, jobsOffset]);
+
+  useEffect(() => {
+    setJobsOffset(0);
   }, [statusFilter]);
+
+  const canPrevious = jobsOffset > 0;
+  const canNext = jobsOffset + jobs.length < totalJobs;
+  const showingFrom = totalJobs === 0 ? 0 : jobsOffset + 1;
+  const showingTo = jobsOffset + jobs.length;
 
   return (
     <main className="page">
@@ -86,6 +102,27 @@ export default function JobsPage() {
               <option value="canceled">canceled</option>
             </select>
           </label>
+        </div>
+        <p className="meta">
+          Showing {showingFrom}-{showingTo} of {totalJobs}
+        </p>
+        <div className="btn-row" style={{ marginBottom: "0.8rem" }}>
+          <button
+            className="btn btn-secondary"
+            disabled={!canPrevious || loading}
+            onClick={() => setJobsOffset((prev) => Math.max(0, prev - jobsPageSize))}
+            type="button"
+          >
+            Previous
+          </button>
+          <button
+            className="btn btn-secondary"
+            disabled={!canNext || loading}
+            onClick={() => setJobsOffset((prev) => prev + jobsPageSize)}
+            type="button"
+          >
+            Next
+          </button>
         </div>
         {queueStats && (
           <p className="meta">

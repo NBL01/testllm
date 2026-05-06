@@ -42,13 +42,16 @@ async function apiRequest<T>(path: string, options: ApiRequestOptions = {}): Pro
   return (await response.json()) as T;
 }
 
-export function listJobs(params?: { status?: string; limit?: number }): Promise<EvaluationJobListResponse> {
+export function listJobs(params?: { status?: string; limit?: number; offset?: number }): Promise<EvaluationJobListResponse> {
   const query = new URLSearchParams();
   if (params?.status && params.status !== "all") {
     query.set("status", params.status);
   }
   if (typeof params?.limit === "number" && params.limit > 0) {
     query.set("limit", String(params.limit));
+  }
+  if (typeof params?.offset === "number" && params.offset >= 0) {
+    query.set("offset", String(params.offset));
   }
   const suffix = query.toString() ? `?${query.toString()}` : "";
   return apiRequest<EvaluationJobListResponse>(`/evaluation-jobs${suffix}`);
@@ -95,16 +98,23 @@ export function getJobSummary(jobId: string): Promise<JobSummaryResult> {
   return apiRequest<JobSummaryResult>(`/evaluation-jobs/${jobId}/summary`);
 }
 
-export function getJobFailedCases(jobId: string, limit = 50): Promise<FailedCasesResponse> {
-  return apiRequest<FailedCasesResponse>(`/evaluation-jobs/${jobId}/failed-cases?limit=${limit}`);
+export function getJobFailedCases(
+  jobId: string,
+  options?: { limit?: number; offset?: number }
+): Promise<FailedCasesResponse> {
+  const query = new URLSearchParams();
+  query.set("limit", String(options?.limit ?? 50));
+  query.set("offset", String(options?.offset ?? 0));
+  return apiRequest<FailedCasesResponse>(`/evaluation-jobs/${jobId}/failed-cases?${query.toString()}`);
 }
 
 export function getJobTraces(
   jobId: string,
-  options?: { limit?: number; onlyFailed?: boolean; testCaseId?: string }
+  options?: { limit?: number; offset?: number; onlyFailed?: boolean; testCaseId?: string }
 ): Promise<TracesResponse> {
   const query = new URLSearchParams();
   query.set("limit", String(options?.limit ?? 50));
+  query.set("offset", String(options?.offset ?? 0));
   query.set("only_failed", String(options?.onlyFailed ?? true));
   const normalizedTestCaseId = (options?.testCaseId || "").trim();
   if (normalizedTestCaseId) {

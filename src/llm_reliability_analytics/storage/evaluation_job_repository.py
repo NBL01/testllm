@@ -187,9 +187,14 @@ def get_evaluation_job(job_id: str) -> EvaluationJob | None:
     return _row_to_job(row)
 
 
-def list_evaluation_jobs(limit: int = 100, status: EvaluationJobStatus | None = None) -> list[EvaluationJob]:
+def list_evaluation_jobs(
+    limit: int = 100,
+    status: EvaluationJobStatus | None = None,
+    offset: int = 0,
+) -> list[EvaluationJob]:
     initialize_schema()
     conn = get_connection()
+    effective_offset = max(0, int(offset))
     if status is None:
         rows = conn.execute(
             """
@@ -220,9 +225,9 @@ def list_evaluation_jobs(limit: int = 100, status: EvaluationJobStatus | None = 
                 updated_at
             FROM evaluation_jobs
             ORDER BY created_at DESC
-            LIMIT ?;
+            LIMIT ? OFFSET ?;
             """,
-            [limit],
+            [limit, effective_offset],
         ).fetchall()
     else:
         rows = conn.execute(
@@ -255,12 +260,26 @@ def list_evaluation_jobs(limit: int = 100, status: EvaluationJobStatus | None = 
             FROM evaluation_jobs
             WHERE status = ?
             ORDER BY created_at DESC
-            LIMIT ?;
+            LIMIT ? OFFSET ?;
             """,
-            [status, limit],
+            [status, limit, effective_offset],
         ).fetchall()
     conn.close()
     return [_row_to_job(row) for row in rows]
+
+
+def count_evaluation_jobs(status: EvaluationJobStatus | None = None) -> int:
+    initialize_schema()
+    conn = get_connection()
+    if status is None:
+        row = conn.execute("SELECT COUNT(*) FROM evaluation_jobs;").fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM evaluation_jobs WHERE status = ?;",
+            [status],
+        ).fetchone()
+    conn.close()
+    return int((row or [0])[0] or 0)
 
 
 def update_evaluation_job(
