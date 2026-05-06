@@ -278,6 +278,64 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
     }
   }
 
+  async function downloadFailedCasesCsv() {
+    try {
+      const failedData = await getJobFailedCases(params.jobId, {
+        limit: 5000,
+        offset: 0
+      });
+      const headers = [
+        "test_case_id",
+        "attempt_index",
+        "category",
+        "score",
+        "error_type",
+        "explanation",
+        "expected_answer",
+        "actual_answer",
+        "latency_ms",
+        "oracle_type",
+        "test_source"
+      ];
+      const escapeCell = (value: unknown): string => {
+        const text = String(value ?? "");
+        if (text.includes(",") || text.includes("\"") || text.includes("\n")) {
+          return `"${text.replaceAll("\"", "\"\"")}"`;
+        }
+        return text;
+      };
+      const rows = failedData.items.map((item) =>
+        [
+          item.test_case_id,
+          item.attempt_index,
+          item.category || "",
+          item.score,
+          item.error_type || "",
+          item.explanation || "",
+          item.expected_answer || "",
+          item.actual_answer || "",
+          item.latency_ms,
+          item.oracle_type || "",
+          item.test_source || ""
+        ]
+          .map(escapeCell)
+          .join(",")
+      );
+      const csv = [headers.join(","), ...rows].join("\n");
+      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+      const link = document.createElement("a");
+      const objectUrl = URL.createObjectURL(blob);
+      link.href = objectUrl;
+      link.download = `evaluation-failed-cases-${params.jobId}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to download failed cases CSV.");
+    }
+  }
+
   return (
     <main className="page">
       <section className="hero">
@@ -593,6 +651,9 @@ export default function JobDetailPage({ params }: { params: { jobId: string } })
                   </button>
                   <button className="btn btn-secondary" onClick={() => void downloadClientJsonReport()} type="button">
                     Download Client .json
+                  </button>
+                  <button className="btn btn-secondary" onClick={() => void downloadFailedCasesCsv()} type="button">
+                    Download Failed .csv
                   </button>
                 </div>
                 <pre>{report.markdown_report}</pre>
