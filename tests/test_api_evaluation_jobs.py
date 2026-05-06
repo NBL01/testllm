@@ -455,3 +455,43 @@ def test_evaluation_job_traces_can_filter_by_test_case_id(monkeypatch, tmp_path)
     assert paged_filtered_payload["offset"] == 0
     assert paged_filtered_payload["total"] >= 1
     assert len(paged_filtered_payload["items"]) == 1
+
+
+def test_evaluation_job_create_rejects_missing_dataset_path(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_invalid_path.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/evaluation-jobs",
+        json={
+            "input_path": "does-not-exist.jsonl",
+            "provider": "mock",
+            "model_name": "mock-baseline",
+            "evaluation_mode": "regression",
+            "oracle_profile": "default",
+            "repeat_count": 1,
+        },
+    )
+    assert create_response.status_code == 400
+    assert "Input file not found" in create_response.json()["detail"]
+
+
+def test_evaluation_job_create_rejects_empty_local_model_name(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_invalid_local_model.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    create_response = client.post(
+        "/evaluation-jobs",
+        json={
+            "input_path": "sample_test_cases.jsonl",
+            "provider": "local",
+            "model_name": "   ",
+            "evaluation_mode": "regression",
+            "oracle_profile": "default",
+            "repeat_count": 1,
+        },
+    )
+    assert create_response.status_code == 400
+    assert "model_name is required when provider=local" in create_response.json()["detail"]

@@ -41,6 +41,11 @@ def load_test_cases(file_path: str | Path) -> tuple[list[TestCase], IngestionSum
     raise ValueError(f"Unsupported file format: {path.suffix}. Use .jsonl or .csv")
 
 
+def resolve_input_path(file_path: str | Path) -> Path:
+    """Resolve an input dataset path using the same lookup rules as load_test_cases."""
+    return _resolve_input_path(file_path)
+
+
 def load_test_cases_from_raw(filename: str) -> tuple[list[TestCase], IngestionSummary]:
     """Load test cases from the default raw dataset directory."""
     return load_test_cases(RAW_DATA_DIR / filename)

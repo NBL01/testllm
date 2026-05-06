@@ -307,7 +307,10 @@ def candidate_events_endpoint(
 
 @router.post("/evaluation-jobs", response_model=EvaluationJob, status_code=201)
 def create_evaluation_job_endpoint(request: EvaluationJobCreate) -> EvaluationJob:
-    return create_job(request)
+    try:
+        return create_job(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/evaluation-jobs/{job_id}/duplicate", response_model=EvaluationJob, status_code=201)

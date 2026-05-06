@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel
 
 from llm_reliability_analytics.analytics.reliability import ReliabilityReport
+from llm_reliability_analytics.ingestion.loader import resolve_input_path
 from llm_reliability_analytics.reporting.markdown import generate_run_markdown_report
 from llm_reliability_analytics.storage.duckdb_store import RunAggregatedSummary, fetch_results_for_run
 from llm_reliability_analytics.storage.evaluation_job_repository import (
@@ -109,6 +110,7 @@ class EvaluationJobNotFoundError(ValueError):
 
 
 def create_job(payload: EvaluationJobCreate) -> EvaluationJob:
+    _validate_job_create_payload(payload)
     return create_evaluation_job(payload)
 
 
@@ -383,3 +385,13 @@ def _require_run_id(job: EvaluationJob) -> str:
     if not run_id:
         raise ValueError(f"Evaluation job is not completed yet: {job.job_id}")
     return run_id
+
+
+def _validate_job_create_payload(payload: EvaluationJobCreate) -> None:
+    try:
+        resolve_input_path(payload.input_path)
+    except FileNotFoundError as exc:
+        raise ValueError(str(exc)) from exc
+
+    if payload.provider in {"ollama", "local"} and not payload.model_name.strip():
+        raise ValueError(f"model_name is required when provider={payload.provider}")
