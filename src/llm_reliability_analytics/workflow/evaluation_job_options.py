@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -14,9 +13,18 @@ from llm_reliability_analytics.runner.llm_client import OPTIONAL_OLLAMA_MODELS, 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
+class DatasetOption(BaseModel):
+    id: str
+    label: str
+    input_path: str
+    dataset_version: str
+    evaluation_mode: str
+
+
 class EvaluationJobOptionsResponse(BaseModel):
     providers: list[str]
     models_by_provider: dict[str, list[str]]
+    datasets: list[DatasetOption]
     dataset_paths: list[str]
     dataset_versions: list[str]
     oracle_profiles: list[str]
@@ -28,7 +36,7 @@ def get_evaluation_job_options() -> EvaluationJobOptionsResponse:
     providers = ["mock", "ollama", "local"]
     ollama_models = _dedupe_ordered([*RECOMMENDED_OLLAMA_MODELS, *OPTIONAL_OLLAMA_MODELS])
     models_by_provider = {
-        "mock": ["mock-baseline"],
+        "mock": ["mock-baseline", "mock-noisy", "mock-failing"],
         "ollama": ollama_models,
         "local": ollama_models,
     }
@@ -40,6 +48,29 @@ def get_evaluation_job_options() -> EvaluationJobOptionsResponse:
     return EvaluationJobOptionsResponse(
         providers=providers,
         models_by_provider=models_by_provider,
+        datasets=[
+            DatasetOption(
+                id="sample_test_cases.jsonl",
+                label="Sample test cases (v1)",
+                input_path="data/raw/sample_test_cases.jsonl",
+                dataset_version="v1",
+                evaluation_mode="regression",
+            ),
+            DatasetOption(
+                id="regression_v1",
+                label="Regression v1 (sample alias; dataset v1)",
+                input_path="data/raw/sample_test_cases.jsonl",
+                dataset_version="v1",
+                evaluation_mode="regression",
+            ),
+            DatasetOption(
+                id="adversarial_v1",
+                label="MVP adversarial v1",
+                input_path="data/adversarial/mvp_adversarial_v1.jsonl",
+                dataset_version="adversarial_v1",
+                evaluation_mode="adversarial",
+            ),
+        ],
         dataset_paths=dataset_paths,
         dataset_versions=dataset_versions,
         oracle_profiles=oracle_profiles,
@@ -49,9 +80,8 @@ def get_evaluation_job_options() -> EvaluationJobOptionsResponse:
 
 
 def _discover_oracle_profiles() -> list[str]:
-    raw = os.getenv("LLM_RELIABILITY_ORACLE_PROFILES", "")
-    configured = [item.strip() for item in raw.split(",") if item.strip()]
-    return _dedupe_ordered(["default", *configured])
+    # Oracle selection and configuration belong to each dataset row, not a profile.
+    return ["default"]
 
 
 def _discover_dataset_paths() -> list[str]:
@@ -83,6 +113,8 @@ def _discover_dataset_versions(dataset_paths: list[str]) -> list[str]:
                     try:
                         payload = json.loads(raw)
                     except json.JSONDecodeError:
+                        continue
+                    if not isinstance(payload, dict):
                         continue
                     dataset_version = payload.get("dataset_version")
                     if isinstance(dataset_version, str) and dataset_version.strip():

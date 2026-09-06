@@ -2,11 +2,41 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, TypedDict
 
 from llm_reliability_analytics.models.domain import TestResult
 from llm_reliability_analytics.storage.db import get_connection, initialize_schema
+
+
+class TraceEvidence(TypedDict):
+    trace_id: str
+    run_id: str
+    test_case_id: str
+    attempt_index: int
+    prompt: str | None
+    raw_output: str | None
+    normalized_output: str | None
+    category: str | None
+    test_source: str | None
+    oracle_type: str | None
+    score: float
+    is_correct: bool
+    error_type: str | None
+    explanation: str | None
+    created_at: datetime
+    expected_answer: str | None
+    oracle_details: dict[str, Any]
+    oracle_config: dict[str, Any] | None
+
+
+def _parse_oracle_details(value: str | None) -> dict[str, Any]:
+    try:
+        parsed = json.loads(value) if value else {}
+    except (ValueError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def capture_traces_for_run(results: list[TestResult]) -> int:
@@ -71,7 +101,7 @@ def fetch_traces(
     test_case_id: str | None = None,
     only_failed: bool = False,
     max_rows: int = 500,
-) -> list[dict[str, Any]]:
+) -> list[TraceEvidence]:
     total, items = fetch_traces_page(
         run_id=run_id,
         category=category,
@@ -91,27 +121,27 @@ def fetch_traces_page(
     only_failed: bool = False,
     max_rows: int = 500,
     offset: int = 0,
-) -> tuple[int, list[dict[str, Any]]]:
+) -> tuple[int, list[TraceEvidence]]:
     initialize_schema()
     conn = get_connection()
     conditions: list[str] = []
     params: list[Any] = []
 
     if run_id:
-        conditions.append("run_id = ?")
+        conditions.append("t.run_id = ?")
         params.append(run_id)
     if category:
-        conditions.append("category = ?")
+        conditions.append("t.category = ?")
         params.append(category)
     if test_case_id:
-        conditions.append("test_case_id = ?")
+        conditions.append("t.test_case_id = ?")
         params.append(test_case_id)
     if only_failed:
-        conditions.append("is_correct = FALSE")
+        conditions.append("t.is_correct = FALSE")
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     total_row = conn.execute(
-        f"SELECT COUNT(*) FROM evaluation_traces {where_clause};",
+        f"SELECT COUNT(*) FROM evaluation_traces t {where_clause};",
         params,
     ).fetchone()
     total = int((total_row or [0])[0] or 0)
@@ -120,32 +150,40 @@ def fetch_traces_page(
     rows = conn.execute(
         f"""
         SELECT
-            trace_id,
-            run_id,
-            test_case_id,
-            attempt_index,
-            prompt,
-            raw_output,
-            normalized_output,
-            category,
-            test_source,
-            oracle_type,
-            score,
-            is_correct,
-            error_type,
-            explanation,
-            created_at
-        FROM evaluation_traces
+            t.trace_id,
+            t.run_id,
+            t.test_case_id,
+            t.attempt_index,
+            t.prompt,
+            t.raw_output,
+            t.normalized_output,
+            t.category,
+            t.test_source,
+            r.oracle_type,
+            t.score,
+            t.is_correct,
+            t.error_type,
+            t.explanation,
+            t.created_at,
+            r.expected_answer,
+            r.oracle_details_json
+        FROM evaluation_traces t
+        LEFT JOIN test_results r
+            ON r.run_id = t.run_id AND r.test_case_id = t.test_case_id
+            AND r.attempt_index = t.attempt_index
         {where_clause}
-        ORDER BY created_at DESC
+        ORDER BY t.created_at DESC, t.run_id, t.test_case_id, t.attempt_index, t.trace_id
         LIMIT ? OFFSET ?;
         """,
         [*params, max_rows, effective_offset],
     ).fetchall()
     conn.close()
 
-    items = [
-        {
+    items: list[TraceEvidence] = []
+    for row in rows:
+        details = _parse_oracle_details(row[16])
+        config = details.get("input_config")
+        items.append({
             "trace_id": row[0],
             "run_id": row[1],
             "test_case_id": row[2],
@@ -161,7 +199,8 @@ def fetch_traces_page(
             "error_type": row[12],
             "explanation": row[13],
             "created_at": row[14],
-        }
-        for row in rows
-    ]
+            "expected_answer": row[15],
+            "oracle_details": details,
+            "oracle_config": config if isinstance(config, dict) else None,
+        })
     return total, items

@@ -21,7 +21,7 @@ from llm_reliability_analytics.models.domain import (
     TestResult,
     TestRun,
 )
-from llm_reliability_analytics.storage.db import get_connection, initialize_schema
+from llm_reliability_analytics.storage.db import get_connection, initialize_schema, transaction_connection
 
 
 class RunAggregatedSummary(BaseModel):
@@ -58,43 +58,42 @@ def upsert_test_cases(test_cases: list[TestCase]) -> int:
         return 0
 
     initialize_schema()
-    conn = get_connection()
-    case_ids = [test_case.id for test_case in test_cases]
-    placeholders = ", ".join(["?"] * len(case_ids))
-    conn.execute(f"DELETE FROM test_cases WHERE test_case_id IN ({placeholders});", case_ids)
+    with transaction_connection() as conn:
+        case_ids = [test_case.id for test_case in test_cases]
+        placeholders = ", ".join(["?"] * len(case_ids))
+        conn.execute(f"DELETE FROM test_cases WHERE test_case_id IN ({placeholders});", case_ids)
 
-    rows = [
-        (
-            test_case.id,
-            test_case.test_source.value,
-            test_case.dataset_version,
-            test_case.category,
-            test_case.difficulty.value,
-            test_case.prompt,
-            test_case.expected_answer,
-            test_case.oracle_type.value,
-            json.dumps(test_case.metadata),
+        rows = [
+            (
+                test_case.id,
+                test_case.test_source.value,
+                test_case.dataset_version,
+                test_case.category,
+                test_case.difficulty.value,
+                test_case.prompt,
+                test_case.expected_answer,
+                test_case.oracle_type.value,
+                json.dumps(test_case.metadata),
+            )
+            for test_case in test_cases
+        ]
+        conn.executemany(
+            """
+            INSERT INTO test_cases (
+                test_case_id,
+                test_source,
+                dataset_version,
+                category,
+                difficulty,
+                prompt,
+                expected_answer,
+                oracle_type,
+                metadata
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            rows,
         )
-        for test_case in test_cases
-    ]
-    conn.executemany(
-        """
-        INSERT INTO test_cases (
-            test_case_id,
-            test_source,
-            dataset_version,
-            category,
-            difficulty,
-            prompt,
-            expected_answer,
-            oracle_type,
-            metadata
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """,
-        rows,
-    )
-    conn.close()
     return len(rows)
 
 
@@ -120,8 +119,10 @@ def create_test_run(
     repetition_index: int | None = None,
     metadata: dict[str, Any] | None = None,
     run_id: str | None = None,
+    connection=None,
 ) -> TestRun:
-    initialize_schema()
+    if connection is None:
+        initialize_schema()
     normalized_group_id = run_group_id or f"{name}:{model_name}:{dataset_version}"
     resolved_repetition_index = repetition_index or _next_repetition_index(normalized_group_id)
     resolved_created_at = created_at or datetime.now(timezone.utc)
@@ -149,7 +150,7 @@ def create_test_run(
         metadata=metadata or {},
     )
 
-    conn = get_connection()
+    conn = connection if connection is not None else get_connection()
     conn.execute(
         """
         INSERT INTO test_runs (
@@ -199,89 +200,90 @@ def create_test_run(
             json.dumps(run.metadata),
         ],
     )
-    conn.close()
+    if connection is None:
+        conn.close()
     return run
 
 
-def insert_batch_results(results: list[TestResult]) -> int:
+def insert_batch_results(results: list[TestResult], *, finalize: bool = True) -> int:
     if not results:
         return 0
 
     initialize_schema()
     run_id = results[0].run_id
-    conn = get_connection()
+    with transaction_connection() as conn:
 
-    rows = [
-        (
-            result.run_id,
-            result.test_case_id,
-            result.attempt_index,
-            result.dataset_version,
-            result.category,
-            result.test_source,
-            result.prompt,
-            result.expected_answer,
-            result.oracle_type,
-            result.raw_output,
-            result.normalized_output,
-            result.actual_answer,
-            result.expected_answer_normalized,
-            result.actual_answer_normalized,
-            result.is_correct,
-            result.score,
-            result.latency_ms,
-            result.latency_source,
-            result.error_type,
-            result.explanation,
-            result.oracle_details_json,
-            result.error_taxonomy.value,
-            result.critical_error_flag,
-            result.normalized_answer,
+        rows = [
+            (
+                result.run_id,
+                result.test_case_id,
+                result.attempt_index,
+                result.dataset_version,
+                result.category,
+                result.test_source,
+                result.prompt,
+                result.expected_answer,
+                result.oracle_type,
+                result.raw_output,
+                result.normalized_output,
+                result.actual_answer,
+                result.expected_answer_normalized,
+                result.actual_answer_normalized,
+                result.is_correct,
+                result.score,
+                result.latency_ms,
+                result.latency_source,
+                result.error_type,
+                result.explanation,
+                result.oracle_details_json,
+                result.error_taxonomy.value,
+                result.critical_error_flag,
+                result.normalized_answer,
+            )
+            for result in results
+        ]
+        conn.executemany(
+            """
+            INSERT OR REPLACE INTO test_results (
+                run_id,
+                test_case_id,
+                attempt_index,
+                dataset_version,
+                category,
+                test_source,
+                prompt,
+                expected_answer,
+                oracle_type,
+                raw_output,
+                normalized_output,
+                actual_answer,
+                expected_answer_normalized,
+                actual_answer_normalized,
+                is_correct,
+                score,
+                latency_ms,
+                latency_source,
+                error_type,
+                explanation,
+                oracle_details_json,
+                error_taxonomy,
+                critical_error_flag,
+                normalized_answer
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            """,
+            rows,
         )
-        for result in results
-    ]
-    conn.executemany(
-        """
-        INSERT OR REPLACE INTO test_results (
-            run_id,
-            test_case_id,
-            attempt_index,
-            dataset_version,
-            category,
-            test_source,
-            prompt,
-            expected_answer,
-            oracle_type,
-            raw_output,
-            normalized_output,
-            actual_answer,
-            expected_answer_normalized,
-            actual_answer_normalized,
-            is_correct,
-            score,
-            latency_ms,
-            latency_source,
-            error_type,
-            explanation,
-            oracle_details_json,
-            error_taxonomy,
-            critical_error_flag,
-            normalized_answer
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """,
-        rows,
-    )
 
-    conn.execute(
-        """
-        UPDATE test_runs
-        SET status = ?, finished_at = ?
-        WHERE id = ?;
-        """,
-        [RunStatus.COMPLETED.value, datetime.now(timezone.utc), run_id],
-    )
-    conn.close()
+        if finalize:
+            conn.execute(
+                """
+                UPDATE test_runs
+                SET status = ?, finished_at = ?
+                WHERE id = ?;
+                """,
+                [RunStatus.COMPLETED.value, datetime.now(timezone.utc), run_id],
+            )
     return len(rows)
 
 

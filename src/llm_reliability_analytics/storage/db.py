@@ -10,6 +10,9 @@ Why DuckDB for this project:
 
 import logging
 import os
+import shutil
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
@@ -170,7 +173,7 @@ MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
         "model_version": "TEXT",
         "dataset_version": "TEXT",
         "evaluation_mode": "TEXT",
-        "created_at": "TIMESTAMP",
+        "created_at": "TIMESTAMPTZ",
         "temperature": "DOUBLE",
         "max_output_tokens": "INTEGER",
         "repeat_count": "INTEGER",
@@ -179,8 +182,8 @@ MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
         "run_group_id": "TEXT",
         "repetition_index": "INTEGER",
         "status": "TEXT",
-        "started_at": "TIMESTAMP",
-        "finished_at": "TIMESTAMP",
+        "started_at": "TIMESTAMPTZ",
+        "finished_at": "TIMESTAMPTZ",
         "metadata": "JSON",
     },
     "test_results": {
@@ -224,7 +227,7 @@ MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
         "is_correct": "BOOLEAN",
         "error_type": "TEXT",
         "explanation": "TEXT",
-        "created_at": "TIMESTAMP",
+        "created_at": "TIMESTAMPTZ",
     },
     "candidate_test_cases": {
         "candidate_id": "TEXT",
@@ -239,8 +242,8 @@ MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
         "validation_errors": "JSON",
         "status": "TEXT",
         "metadata": "JSON",
-        "created_at": "TIMESTAMP",
-        "updated_at": "TIMESTAMP",
+        "created_at": "TIMESTAMPTZ",
+        "updated_at": "TIMESTAMPTZ",
     },
     "candidate_review_events": {
         "event_id": "TEXT",
@@ -249,7 +252,7 @@ MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
         "new_status": "TEXT",
         "reviewer": "TEXT",
         "note": "TEXT",
-        "created_at": "TIMESTAMP",
+        "created_at": "TIMESTAMPTZ",
     },
     "evaluation_jobs": {
         "job_id": "TEXT",
@@ -272,10 +275,10 @@ MIGRATION_COLUMN_SQL_TYPES: dict[str, dict[str, str]] = {
         "project_name": "TEXT",
         "linked_run_id": "TEXT",
         "failure_reason": "TEXT",
-        "created_at": "TIMESTAMP",
-        "started_at": "TIMESTAMP",
-        "completed_at": "TIMESTAMP",
-        "updated_at": "TIMESTAMP",
+        "created_at": "TIMESTAMPTZ",
+        "started_at": "TIMESTAMPTZ",
+        "completed_at": "TIMESTAMPTZ",
+        "updated_at": "TIMESTAMPTZ",
     },
 }
 
@@ -303,7 +306,7 @@ CREATE_TABLE_SQL: dict[str, str] = {
             model_version TEXT NOT NULL,
             dataset_version TEXT NOT NULL,
             evaluation_mode TEXT NOT NULL,
-            created_at TIMESTAMP,
+            created_at TIMESTAMPTZ,
             temperature DOUBLE,
             max_output_tokens INTEGER NOT NULL,
             repeat_count INTEGER NOT NULL,
@@ -312,8 +315,8 @@ CREATE_TABLE_SQL: dict[str, str] = {
             run_group_id TEXT NOT NULL,
             repetition_index INTEGER NOT NULL,
             status TEXT NOT NULL,
-            started_at TIMESTAMP,
-            finished_at TIMESTAMP,
+            started_at TIMESTAMPTZ,
+            finished_at TIMESTAMPTZ,
             metadata JSON
         );
     """,
@@ -362,7 +365,7 @@ CREATE_TABLE_SQL: dict[str, str] = {
             is_correct BOOLEAN,
             error_type TEXT,
             explanation TEXT,
-            created_at TIMESTAMP
+            created_at TIMESTAMPTZ
         );
     """,
     "candidate_test_cases": """
@@ -379,8 +382,8 @@ CREATE_TABLE_SQL: dict[str, str] = {
             validation_errors JSON,
             status TEXT NOT NULL,
             metadata JSON,
-            created_at TIMESTAMP,
-            updated_at TIMESTAMP
+            created_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ
         );
     """,
     "candidate_review_events": """
@@ -391,7 +394,7 @@ CREATE_TABLE_SQL: dict[str, str] = {
             new_status TEXT NOT NULL,
             reviewer TEXT,
             note TEXT,
-            created_at TIMESTAMP
+            created_at TIMESTAMPTZ
         );
     """,
     "evaluation_jobs": """
@@ -416,13 +419,22 @@ CREATE_TABLE_SQL: dict[str, str] = {
             project_name TEXT,
             linked_run_id TEXT,
             failure_reason TEXT,
-            created_at TIMESTAMP,
-            started_at TIMESTAMP,
-            completed_at TIMESTAMP,
-            updated_at TIMESTAMP
+            created_at TIMESTAMPTZ,
+            started_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ,
+            dataset_sha256 TEXT,
+            dataset_snapshot JSON,
+            source_job_id TEXT,
+            queued_at TIMESTAMPTZ
         );
     """,
 }
+
+
+for _name, _type in {"dataset_sha256": "TEXT", "dataset_snapshot": "JSON", "source_job_id": "TEXT", "queued_at": "TIMESTAMPTZ"}.items():
+    EXPECTED_TABLE_COLUMNS["evaluation_jobs"].append(_name)
+    MIGRATION_COLUMN_SQL_TYPES["evaluation_jobs"][_name] = _type
 
 
 def get_db_path() -> Path:
@@ -436,11 +448,18 @@ def get_db_path() -> Path:
 def get_connection() -> duckdb.DuckDBPyConnection:
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    return duckdb.connect(str(db_path))
+    conn = duckdb.connect(str(db_path))
+    conn.execute("SET TimeZone='UTC'")
+    return conn
 
 
 def initialize_database() -> None:
     conn = get_connection()
+    try:
+        _migrate_legacy_timestamps(conn)
+    except Exception:
+        conn.close()
+        raise
     for table_name in (
         "test_cases",
         "test_runs",
@@ -457,6 +476,48 @@ def initialize_database() -> None:
 def initialize_schema() -> None:
     """Alias used by the domain-oriented DuckDB storage module."""
     initialize_database()
+
+
+def _migrate_legacy_timestamps(conn) -> None:
+    columns = conn.execute("SELECT table_name, column_name FROM information_schema.columns "
+                           "WHERE table_schema='main' AND data_type='TIMESTAMP'").fetchall()
+    if not columns:
+        return
+    populated = any(conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] for table, _ in columns)
+    zone = os.getenv("LLM_RELIABILITY_LEGACY_TIMEZONE")
+    if populated and not zone:
+        raise RuntimeError("Legacy timestamps need an explicit timezone. Stop other processes, back up the DB, "
+                           "and set LLM_RELIABILITY_LEGACY_TIMEZONE to the original writer timezone (e.g. America/New_York).")
+    if populated:
+        conn.execute("CHECKPOINT")
+        path = get_db_path()
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        shutil.copy2(path, path.with_suffix(path.suffix + f".{stamp}.bak"))
+    conn.execute("BEGIN TRANSACTION")
+    try:
+        zone_sql = (zone or "UTC").replace("'", "''")
+        for table, column in columns:
+            table, column = table.replace('"', '""'), column.replace('"', '""')
+            conn.execute(f'ALTER TABLE "{table}" ALTER COLUMN "{column}" TYPE TIMESTAMPTZ '
+                         f"USING timezone('{zone_sql}', \"{column}\")")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
+@contextmanager
+def transaction_connection():
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN TRANSACTION")
+        yield conn
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
 
 
 def _ensure_table_schema(conn: duckdb.DuckDBPyConnection, table_name: str) -> None:

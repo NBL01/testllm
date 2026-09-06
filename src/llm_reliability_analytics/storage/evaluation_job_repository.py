@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from llm_reliability_analytics.storage.db import get_connection, initialize_schema
 
@@ -34,6 +35,10 @@ class EvaluationJob(BaseModel):
     project_name: str = ""
     linked_run_id: str | None = None
     failure_reason: str | None = None
+    dataset_sha256: str = ""
+    dataset_snapshot: list[dict] = Field(default_factory=list)
+    source_job_id: str | None = None
+    queued_at: datetime | None = None
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -41,15 +46,16 @@ class EvaluationJob(BaseModel):
 
 
 class EvaluationJobCreate(BaseModel):
-    input_path: str = "sample_test_cases.jsonl"
+    model_config = ConfigDict(str_strip_whitespace=True, allow_inf_nan=False)
+    input_path: str = Field(default="sample_test_cases.jsonl", min_length=1)
     provider: Literal["mock", "ollama", "local"] = "mock"
-    model_name: str = "mock-baseline"
+    model_name: str = Field(default="mock-baseline", min_length=1)
     dataset_version: str | None = None
     evaluation_mode: Literal["regression", "exploratory", "adversarial", "trace_replay"] = "regression"
-    oracle_profile: str = "default"
-    temperature: float = 0.0
+    oracle_profile: Literal["default"] = "default"
+    temperature: float = Field(default=0.0, ge=0)
     max_output_tokens: int = Field(default=128, ge=1, le=1024)
-    timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
+    timeout_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
     repeat_count: int = Field(default=1, ge=1)
     limit: int | None = Field(default=None, ge=1)
     notes: str = ""
@@ -59,11 +65,14 @@ class EvaluationJobCreate(BaseModel):
     project_name: str = ""
 
 
-def create_evaluation_job(payload: EvaluationJobCreate) -> EvaluationJob:
+def create_evaluation_job(payload: EvaluationJobCreate, *, dataset_sha256="", dataset_snapshot=None, source_job_id=None) -> EvaluationJob:
     initialize_schema()
     conn = get_connection()
     now = datetime.now(timezone.utc)
     job = EvaluationJob(
+        dataset_sha256=dataset_sha256,
+        dataset_snapshot=dataset_snapshot or [],
+        source_job_id=source_job_id,
         job_id=str(uuid4()),
         status="draft",
         input_path=payload.input_path,
@@ -111,9 +120,9 @@ def create_evaluation_job(payload: EvaluationJobCreate) -> EvaluationJob:
             created_at,
             started_at,
             completed_at,
-            updated_at
+            updated_at, dataset_sha256, dataset_snapshot, source_job_id, queued_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         [
             job.job_id,
@@ -140,6 +149,7 @@ def create_evaluation_job(payload: EvaluationJobCreate) -> EvaluationJob:
             job.started_at,
             job.completed_at,
             job.updated_at,
+            job.dataset_sha256, json.dumps(job.dataset_snapshot), job.source_job_id, job.queued_at,
         ],
     )
     conn.close()
@@ -175,7 +185,7 @@ def get_evaluation_job(job_id: str) -> EvaluationJob | None:
             created_at,
             started_at,
             completed_at,
-            updated_at
+            updated_at, dataset_sha256, dataset_snapshot, source_job_id, queued_at
         FROM evaluation_jobs
         WHERE job_id = ?;
         """,
@@ -198,7 +208,7 @@ def list_evaluation_jobs(
     initialize_schema()
     conn = get_connection()
     effective_offset = max(0, int(offset))
-    resolved_sort_by = "updated_at" if sort_by.strip().lower() == "updated_at" else "created_at"
+    resolved_sort_by = sort_by if sort_by in {"created_at", "updated_at", "queued_at"} else "created_at"
     resolved_sort_order = "ASC" if sort_order.strip().lower() == "asc" else "DESC"
     normalized_search_query = (search_query or "").strip().lower()
     search_term = f"%{normalized_search_query}%"
@@ -250,10 +260,10 @@ def list_evaluation_jobs(
             created_at,
             started_at,
             completed_at,
-            updated_at
+            updated_at, dataset_sha256, dataset_snapshot, source_job_id, queued_at
         FROM evaluation_jobs
         {where_sql}
-        ORDER BY {resolved_sort_by} {resolved_sort_order}
+        ORDER BY {resolved_sort_by} {resolved_sort_order}, job_id {resolved_sort_order}
         LIMIT ? OFFSET ?;
         """,
         [*params, limit, effective_offset],
@@ -297,52 +307,34 @@ def count_evaluation_jobs(status: EvaluationJobStatus | None = None, search_quer
     return int((row or [0])[0] or 0)
 
 
-def update_evaluation_job(
-    job_id: str,
-    *,
-    status: EvaluationJobStatus | None = None,
-    linked_run_id: str | None = None,
-    failure_reason: str | None = None,
-    started_at: datetime | None = None,
-    completed_at: datetime | None = None,
-) -> EvaluationJob | None:
-    existing = get_evaluation_job(job_id)
-    if existing is None:
-        return None
+_UNSET = object()
 
+
+def update_evaluation_job(job_id: str, *, status=None, linked_run_id=_UNSET, failure_reason=_UNSET,
+                          started_at=_UNSET, completed_at=_UNSET, queued_at=_UNSET,
+                          expected_statuses: tuple[str, ...] | None = None) -> EvaluationJob | None:
     initialize_schema()
+    updates = {"updated_at": datetime.now(timezone.utc)}
+    if status is not None:
+        updates["status"] = status
+    for field, value in {"linked_run_id": linked_run_id, "failure_reason": failure_reason,
+                         "started_at": started_at, "completed_at": completed_at, "queued_at": queued_at}.items():
+        if value is not _UNSET:
+            updates[field] = value
+    where = "job_id=?"
+    params = [*updates.values(), job_id]
+    if expected_statuses:
+        where += f" AND status IN ({', '.join('?' for _ in expected_statuses)})"
+        params.extend(expected_statuses)
     conn = get_connection()
-    now = datetime.now(timezone.utc)
-    resolved_status = status or existing.status
-    resolved_linked_run_id = linked_run_id if linked_run_id is not None else existing.linked_run_id
-    resolved_failure_reason = failure_reason if failure_reason is not None else existing.failure_reason
-    resolved_started_at = started_at if started_at is not None else existing.started_at
-    resolved_completed_at = completed_at if completed_at is not None else existing.completed_at
-
-    conn.execute(
-        """
-        UPDATE evaluation_jobs
-        SET
-            status = ?,
-            linked_run_id = ?,
-            failure_reason = ?,
-            started_at = ?,
-            completed_at = ?,
-            updated_at = ?
-        WHERE job_id = ?;
-        """,
-        [
-            resolved_status,
-            resolved_linked_run_id,
-            resolved_failure_reason,
-            resolved_started_at,
-            resolved_completed_at,
-            now,
-            job_id,
-        ],
-    )
-    conn.close()
-    return get_evaluation_job(job_id)
+    try:
+        row = conn.execute(f"UPDATE evaluation_jobs SET {', '.join(field + '=?' for field in updates)} "
+                           f"WHERE {where} RETURNING job_id", params).fetchone()
+        if row is None and expected_statuses:
+            raise ValueError("Job state changed; reload before retrying this action.")
+    finally:
+        conn.close()
+    return get_evaluation_job(job_id) if row else None
 
 
 def evaluation_job_status_counts() -> dict[str, int]:
@@ -398,4 +390,8 @@ def _row_to_job(row: tuple) -> EvaluationJob:
         started_at=row[21],
         completed_at=row[22],
         updated_at=row[23],
+        dataset_sha256=row[24] or "",
+        dataset_snapshot=json.loads(row[25] or "[]"),
+        source_job_id=row[26],
+        queued_at=row[27],
     )

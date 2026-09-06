@@ -52,6 +52,12 @@ class RunComparisonReport(BaseModel):
 
 
 class ReliabilityReport(BaseModel):
+    metric_version: str = "legacy-v1"
+    repeated_case_count: int = Field(default=0, ge=0)
+    schema_case_count: int = Field(default=0, ge=0)
+    schema_attempt_count: int = Field(default=0, ge=0)
+    measurement_notes: list[str] = Field(default_factory=list)
+    latency_sources: dict[str, int] = Field(default_factory=dict)
     run_id: str = "unknown-run"
     dataset_version: str = "v1"
     repetition_index: int = Field(default=1, ge=1)
@@ -142,6 +148,10 @@ def compute_reliability_report(
         )
 
     unique_test_cases = len({result.test_case_id for result in results})
+    case_counts = Counter(result.test_case_id for result in results)
+    repeated_case_count = sum(count > 1 for count in case_counts.values())
+    schema_results = [result for result in results if result.oracle_type == "json_schema"]
+    schema_case_count = len({result.test_case_id for result in schema_results})
     attempts_per_case = (total_test_cases / unique_test_cases) if unique_test_cases else 0.0
 
     passed = sum(1 for result in results if result.is_correct)
@@ -215,6 +225,11 @@ def compute_reliability_report(
     )
 
     return ReliabilityReport(
+        repeated_case_count=repeated_case_count,
+        schema_case_count=schema_case_count,
+        schema_attempt_count=len(schema_results),
+        measurement_notes=_measurement_notes(total_test_cases, repeated_case_count, len(schema_results)),
+        latency_sources=dict(sorted(Counter(result.latency_source or "unknown" for result in results).items())),
         run_id=resolved_run_id,
         dataset_version=resolved_dataset_version,
         repetition_index=resolved_repetition_index,
@@ -250,6 +265,37 @@ def compute_reliability_report(
         overall_reliability_score=overall_reliability_score,
         run_level_report=run_level_report,
     )
+
+
+def _measurement_notes(total: int, repeated: int, schema_attempts: int) -> list[str]:
+    notes = [
+        "legacy-v1 preserves historical scores without changing the composite formula. "
+        "Weights: accuracy 0.35, consistency 0.15, repeatability 0.15, schema heuristic 0.10, "
+        "critical-error complement 0.10, latency 0.10, failure-density complement 0.05. "
+        "Failure-density complement duplicates accuracy, giving accuracy an effective weight of 0.40.",
+        "total_test_cases, passed, failed, accuracy and failure density use all attempts, not unique cases. "
+        "repeated_case_count counts unique cases with at least two recorded attempts; "
+        "schema_case_count counts unique json_schema cases and schema_attempt_count counts their attempts. "
+        "Schema counts indicate configured scope, not proof that validation completed.",
+        "Legacy repeatability includes singleton cases as stable; mixed-run consistency also includes singletons. "
+        "Without repeated cases, consistency is score variance across different cases, not repeat stability.",
+        "Legacy schema_compliance_rate is the absence of parsing/validation/schema-like errors across all attempts, "
+        "including non-schema attempts; it is not a schema-only pass rate.",
+        "latency_sources counts attempts by stored provenance: mock_simulated is simulated, observed is real "
+        "provider-call timing; measured is a legacy label that does not establish provider provenance. "
+        "Mixed-source averages are not a real-provider performance benchmark.",
+        "exact_match retains lenient legacy defaults: normalized matching, substring matching unless strict_exact, "
+        "and numeric equivalence with number_tolerance (default 0). strict_exact disables substring by default, "
+        "not normalization or numeric equivalence; allow_substring_match can override it. "
+        "partial_as_correct defaults to false; per-case input_config controls these options.",
+    ]
+    if not total:
+        notes.append("No attempts: repeatability, schema validation and latency are not measured; zero values are placeholders.")
+    elif not repeated:
+        notes.append("Single-attempt run: repeatability is not measured; legacy repeatability_score=1.0 is a heuristic, not evidence.")
+    if not schema_attempts:
+        notes.append("No json_schema attempts: schema validation is not measured, regardless of the legacy schema score.")
+    return notes
 
 
 def compute_run_comparison_report(
@@ -341,6 +387,7 @@ def _empty_report(run_id: str, dataset_version: str, repetition_index: int) -> R
     )
     return ReliabilityReport(
         run_id=run_id,
+        measurement_notes=_measurement_notes(0, 0, 0),
         dataset_version=dataset_version,
         repetition_index=repetition_index,
         total_test_cases=0,

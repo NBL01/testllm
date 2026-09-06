@@ -9,6 +9,9 @@ This module keeps the architecture easy to explain:
 """
 
 import json
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from llm_reliability_analytics.storage.db import get_connection
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -112,12 +115,17 @@ def run_batch_workflow(
     seed: int = 42,
     limit: int | None = None,
     repeats_per_case: int = 1,
+    prepared_cases: list[TestCase] | None = None,
+    execution_run=None,
 ) -> RunBatchWorkflowResult:
     if repeats_per_case < 1:
         raise ValueError("repeats_per_case must be >= 1")
 
     initialize_storage_schema()
-    test_cases, _summary = load_test_cases(input_path)
+    if prepared_cases is None:
+        test_cases, _summary = load_test_cases(input_path)
+    else:
+        test_cases = [case.model_copy(deep=True) for case in prepared_cases]
     if limit is not None:
         test_cases = test_cases[:limit]
     if not test_cases:
@@ -142,6 +150,7 @@ def run_batch_workflow(
         mode=mode,
         seed=seed,
         repeats_per_case=repeats_per_case,
+        execution_run=execution_run,
     )
 
 
@@ -238,6 +247,7 @@ def _run_prepared_test_cases(
     mode: Literal["deterministic", "semi_random"] | None,
     seed: int,
     repeats_per_case: int,
+    execution_run=None,
 ) -> RunBatchWorkflowResult:
     effective_mock_mode = mode if mode is not None else mock_mode
     execution_mode = resolve_execution_mode(provider=provider, mode=run_mode)
@@ -252,7 +262,7 @@ def _run_prepared_test_cases(
         test_case.dataset_version = resolved_dataset_version
 
     upsert_test_cases(test_cases)
-    run = create_test_run(
+    run = execution_run or create_test_run(
         name=run_name,
         model_name=resolved_model_name,
         run_label=run_label,
@@ -277,51 +287,52 @@ def _run_prepared_test_cases(
         },
     )
 
-    llm_client = build_llm_client(
-        provider=normalized_provider,
-        run_mode=normalized_run_mode,
-        model_name=resolved_model_name,
-        temperature=temperature,
-        max_output_tokens=max_output_tokens,
-        timeout_seconds=timeout_seconds,
-        mock_mode=effective_mock_mode,
-        seed=seed,
-    )
-    _validate_local_model_availability(
-        llm_client=llm_client,
-        execution_mode=normalized_run_mode,
-        model_name=resolved_model_name,
-    )
+    with _finalize_run(run.id):
+        llm_client = build_llm_client(
+            provider=normalized_provider,
+            run_mode=normalized_run_mode,
+            model_name=resolved_model_name,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            timeout_seconds=timeout_seconds,
+            mock_mode=effective_mock_mode,
+            seed=seed,
+        )
+        _validate_local_model_availability(
+            llm_client=llm_client,
+            execution_mode=normalized_run_mode,
+            model_name=resolved_model_name,
+        )
 
-    runner = TestRunner(llm_client=llm_client)
-    results = runner.run(test_cases, run_id=run.id, repeats_per_case=repeats_per_case)
-    latency_source = "mock_simulated" if normalized_run_mode == "mock" else "observed"
-    for result in results:
-        if normalized_run_mode == "mock":
-            result.latency_source = latency_source
-        elif result.latency_source in {"", None}:
-            result.latency_source = latency_source
+        runner = TestRunner(llm_client=llm_client)
+        results = runner.run(test_cases, run_id=run.id, repeats_per_case=repeats_per_case)
+        latency_source = "mock_simulated" if normalized_run_mode == "mock" else "observed"
+        for result in results:
+            if normalized_run_mode == "mock":
+                result.latency_source = latency_source
+            elif result.latency_source in {"", None}:
+                result.latency_source = latency_source
 
-    score_results_with_oracles(test_cases=test_cases, results=results)
-    insert_batch_results(results)
-    capture_traces_for_run(results)
+        score_results_with_oracles(test_cases=test_cases, results=results)
+        insert_batch_results(results, finalize=False)
+        capture_traces_for_run(results)
 
-    summaries = fetch_aggregated_summaries(run.id)
-    if not summaries:
-        raise RuntimeError("Run completed but storage summary was not found")
+        summaries = fetch_aggregated_summaries(run.id)
+        if not summaries:
+            raise RuntimeError("Run completed but storage summary was not found")
 
-    return RunBatchWorkflowResult(
-        run_id=run.id,
-        loaded_test_cases=len(test_cases),
-        executed_test_cases=len(results),
-        report=compute_reliability_report(
-            results,
+        return RunBatchWorkflowResult(
             run_id=run.id,
-            dataset_version=run.dataset_version,
-            repetition_index=run.repetition_index,
-        ),
-        storage_summary=summaries[0],
-    )
+            loaded_test_cases=len(test_cases),
+            executed_test_cases=len(results),
+            report=compute_reliability_report(
+                results,
+                run_id=run.id,
+                dataset_version=run.dataset_version,
+                repetition_index=run.repetition_index,
+            ),
+            storage_summary=summaries[0],
+        )
 
 
 def score_results_with_oracles(test_cases: list[TestCase], results: list[TestResult]) -> None:
@@ -373,6 +384,7 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
                     "evaluation_skipped": True,
                     "reason": "model_generation_error",
                     "error_type": result.error_type,
+                    "input_config": dict(test_case.metadata),
                 }
             )
             result.error_taxonomy = _taxonomy_from_error_type(result.error_type)
@@ -408,7 +420,7 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
             result.is_correct = evaluation.is_correct
             result.score = evaluation.score
             result.explanation = evaluation.explanation
-            result.oracle_details_json = json.dumps(evaluation.details, ensure_ascii=True)
+            result.oracle_details_json = json.dumps({**evaluation.details, "input_config": metadata}, ensure_ascii=True)
             result.error_type = evaluation.error_type
             if result.error_type is None:
                 result.error_taxonomy = ErrorTaxonomy.NONE
@@ -427,7 +439,7 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
             result.error_type = result.error_type or f"oracle_{type(exc).__name__}"
             result.explanation = f"Oracle evaluation failed: {exc}"
             result.oracle_details_json = json.dumps(
-                {"evaluation_error": type(exc).__name__, "message": str(exc)},
+                {"evaluation_error": type(exc).__name__, "message": str(exc), "input_config": metadata},
                 ensure_ascii=True,
             )
             result.error_taxonomy = ErrorTaxonomy.ORACLE
@@ -474,3 +486,18 @@ def _validate_local_model_availability(
         raise LLMModelNotFoundError(
             f"Ollama model '{model_name}' is not installed. Install it with `ollama pull {model_name}`."
         )
+
+
+@contextmanager
+def _finalize_run(run_id):
+    status = "failed"
+    try:
+        yield
+        status = "completed"
+    finally:
+        conn = get_connection()
+        try:
+            conn.execute("UPDATE test_runs SET status=?, finished_at=? WHERE id=?",
+                         [status, datetime.now(timezone.utc), run_id])
+        finally:
+            conn.close()

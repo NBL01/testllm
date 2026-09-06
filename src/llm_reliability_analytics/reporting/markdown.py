@@ -1,11 +1,22 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
 from datetime import datetime, timezone
+from html import escape
+import re
+from typing import Any, TYPE_CHECKING
+
+from pydantic import BaseModel
 
 from llm_reliability_analytics.analytics.reliability import ReliabilityReport
-from llm_reliability_analytics.workflow.service import RunReportResult, run_report_workflow
+if TYPE_CHECKING:
+    from llm_reliability_analytics.workflow.service import RunReportResult
 
 
 def generate_run_markdown_report(run_id: str) -> str:
     """Load a run from storage and render a Markdown summary report."""
+    from llm_reliability_analytics.workflow.service import run_report_workflow
+
     run_report = run_report_workflow(run_id)
     return render_markdown_report(run_report)
 
@@ -21,6 +32,12 @@ def render_markdown_report(run_report: RunReportResult) -> str:
     lines.append(f"- Run ID: `{run_report.run_id}`")
     lines.append(f"- Dataset Version: `{summary.dataset_version}`")
     lines.append(f"- Repetition Index: `{summary.repetition_index}`")
+    lines.append(f"- Provider: {_markdown_text(summary.provider or 'unknown')}")
+    lines.append(f"- Model: {_markdown_text(summary.model_name or 'unknown')}")
+    lines.append(f"- Model Version: {_markdown_text(summary.model_version or 'unknown')}")
+    lines.append(f"- Execution Mode: {_markdown_text(summary.mode)}")
+    lines.append(f"- Evaluation Mode: {_markdown_text(summary.evaluation_mode)}")
+    lines.append(f"- Configured Repeat Count: {summary.repeat_count}")
     lines.append(f"- Generated At (UTC): `{_utc_now_iso()}`")
     lines.append("")
     lines.append("## Executive Summary")
@@ -30,6 +47,14 @@ def render_markdown_report(run_report: RunReportResult) -> str:
     lines.append("## Core Metrics")
     lines.append("")
     lines.extend(_build_core_metrics_table(report))
+    lines.append("")
+    lines.append("## Measurement Scope")
+    lines.append("")
+    lines.append(f"- Metric Version: `{report.metric_version}`")
+    lines.append(f"- Repeated Cases (at least two attempts): {report.repeated_case_count}")
+    lines.append(f"- Schema Cases (unique, configured): {report.schema_case_count}")
+    lines.append(f"- Schema Attempts (configured): {report.schema_attempt_count}")
+    lines.extend(f"- {note}" for note in report.measurement_notes)
     lines.append("")
     lines.append("## Category Breakdown")
     lines.append("")
@@ -58,6 +83,34 @@ def render_markdown_report(run_report: RunReportResult) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
+def append_job_context(markdown: str, job: BaseModel | Mapping[str, Any]) -> str:
+    """Append job metadata without importing the job workflow or mutating input."""
+    values = job.model_dump() if isinstance(job, BaseModel) else job
+    fields = (
+        ("job_id", "Job ID"), ("status", "Status"), ("linked_run_id", "Linked Run ID"),
+        ("provider", "Provider"), ("model_name", "Model"), ("input_path", "Dataset Path"),
+        ("dataset_version", "Dataset Version"), ("evaluation_mode", "Evaluation Mode"),
+        ("oracle_profile", "Oracle Profile"), ("temperature", "Temperature"),
+        ("max_output_tokens", "Max Output Tokens"), ("repeat_count", "Configured Repeat Count"),
+        ("timeout_seconds", "Timeout Seconds"), ("limit", "Case Limit"),
+        ("submitted_by", "Submitted By"), ("team_name", "Team"), ("client_name", "Client"),
+        ("project_name", "Project"), ("notes", "Notes"),
+    )
+    lines = [markdown.rstrip(), "", "## Job Context", ""]
+    for key, label in fields:
+        value = values.get(key)
+        lines.append(f"- {label}: {_markdown_text(value) if value is not None and value != '' else 'not recorded'}")
+    lines.append("- Oracle Profile Semantics: scoring is dataset-defined by each case's oracle type and input_config; "
+                 "the job profile is a label, not a scoring override.")
+    return "\n".join(lines) + "\n"
+
+
+def _markdown_text(value: Any) -> str:
+    text = escape(str(value), quote=True)
+    text = re.sub(r"([\\`*_{}\[\]()#|~])", r"\\\1", text)
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+
+
 def _build_executive_summary(report: ReliabilityReport) -> str:
     return (
         f"This run evaluated **{report.total_test_cases}** attempts across "
@@ -70,7 +123,7 @@ def _build_core_metrics_table(report: ReliabilityReport) -> list[str]:
     return [
         "| Metric | Value |",
         "| --- | ---: |",
-        f"| Total Test Cases | {report.total_test_cases} |",
+        f"| Total Attempts (legacy Total Test Cases) | {report.total_test_cases} |",
         f"| Unique Test Cases | {report.unique_test_cases} |",
         f"| Passed | {report.passed} |",
         f"| Failed | {report.failed} |",
@@ -83,7 +136,7 @@ def _build_category_breakdown(report: ReliabilityReport) -> list[str]:
         return ["No category-level data available."]
 
     lines = [
-        "| Category | Total | Passed | Failed | Accuracy | Avg Latency (ms) |",
+        "| Category | Attempts | Passed | Failed | Accuracy | Avg Latency (ms) |",
         "| --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     ordered = sorted(
@@ -117,16 +170,22 @@ def _build_latency_summary(report: ReliabilityReport) -> list[str]:
     return [
         f"- Average Latency: **{report.average_latency_ms:.2f} ms**",
         f"- P95 Latency: **{report.p95_latency_ms:.2f} ms**",
-        f"- Failure Density: **{report.failure_density_per_1000:.2f} failures / 1000 cases**",
+        f"- Failure Density: **{report.failure_density_per_1000:.2f} failures / 1000 attempts**",
+        "- Latency Sources (attempt counts): " + (
+            ", ".join(f"{source}: {count}" for source, count in sorted(report.latency_sources.items()))
+            or "not measured"
+        ),
     ]
 
 
 def _build_consistency_summary(report: ReliabilityReport) -> list[str]:
     return [
         f"- Consistency Score: **{report.consistency_score:.3f}**",
-        f"- Repeatability Score: **{report.repeatability_score:.3f}**",
+        f"- Repeatability Score (legacy heuristic): **{report.repeatability_score:.3f}**"
+        + ("; repeatability not measured" if not report.repeated_case_count else ""),
         f"- Unstable Cases: **{report.unstable_case_count}**",
-        f"- Schema Compliance Rate: **{_pct(report.schema_compliance_rate)}**",
+        f"- Schema Compliance Rate (legacy all-attempt heuristic): **{_pct(report.schema_compliance_rate)}**"
+        + ("; schema validation not measured" if not report.schema_attempt_count else ""),
         f"- Critical Error Rate: **{_pct(report.critical_error_rate)}**",
     ]
 
@@ -141,7 +200,7 @@ def _build_conclusions(report: ReliabilityReport) -> list[str]:
 
     reliability_band = _reliability_band(report.overall_reliability_score)
     return [
-        f"- The current run is in the **{reliability_band}** reliability band.",
+        f"- The current run is in the **{reliability_band}** legacy heuristic band, not a validated deployment recommendation.",
         f"- The weakest category is **{top_weak}** and should be prioritized for prompt/oracle refinement.",
         f"- The most frequent error type is **{top_error}**; reducing this error will likely improve overall reliability fastest.",
         "- Next iteration should target high-failure categories while preserving low latency and repeatable behavior.",

@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
+
 from llm_reliability_analytics.models.domain import OracleType, TestCase, TestSource
 from llm_reliability_analytics.storage.trace_repository import fetch_traces
+
+
+class TraceReplayReviewRequiredError(ValueError):
+    """Replay needs reviewed original evidence, never an inferred model answer."""
 
 
 def load_trace_replay_test_cases(
@@ -15,19 +21,29 @@ def load_trace_replay_test_cases(
     traces = fetch_traces(run_id=source_run_id, only_failed=only_failed, max_rows=max_cases)
     test_cases: list[TestCase] = []
     for trace in traces:
-        oracle_value = str(trace.get("oracle_type") or "exact_match").strip().lower()
+        review_message = f"Review required for trace {trace['trace_id']}: "
+        oracle_value = str(trace.get("oracle_type") or "").strip().lower()
         try:
             oracle_type = OracleType(oracle_value)
-        except ValueError:
-            oracle_type = OracleType.EXACT_MATCH
+        except ValueError as exc:
+            raise TraceReplayReviewRequiredError(
+                review_message + "missing or unsupported original oracle_type."
+            ) from exc
 
-        prompt = str(trace.get("prompt") or "").strip()
-        if not prompt:
-            continue
+        prompt = trace.get("prompt")
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise TraceReplayReviewRequiredError(review_message + "missing original prompt.")
 
-        expected_answer = str(trace.get("raw_output") or "").strip()
-        if not expected_answer:
-            expected_answer = str(trace.get("normalized_output") or "").strip()
+        expected_answer = trace.get("expected_answer")
+        if not isinstance(expected_answer, str):
+            raise TraceReplayReviewRequiredError(
+                review_message + "missing expected_answer snapshot; supply reviewed original evidence."
+            )
+        config = trace.get("oracle_config")
+        if not isinstance(config, dict):
+            raise TraceReplayReviewRequiredError(
+                review_message + "missing oracle input_config snapshot; supply reviewed original configuration."
+            )
 
         test_cases.append(
             TestCase(
@@ -40,6 +56,7 @@ def load_trace_replay_test_cases(
                 expected_answer=expected_answer,
                 oracle_type=oracle_type,
                 metadata={
+                    **deepcopy(config),
                     "source_trace_id": trace["trace_id"],
                     "source_run_id": source_run_id,
                     "source_error_type": trace.get("error_type"),

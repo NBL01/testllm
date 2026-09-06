@@ -3,14 +3,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
+import re
+from uuid import uuid4
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel
 
 from llm_reliability_analytics.analytics.reliability import ReliabilityReport
-from llm_reliability_analytics.ingestion.loader import resolve_input_path
+from llm_reliability_analytics.ingestion.loader import resolve_input_path, load_test_cases
+from llm_reliability_analytics.models.domain import TestCase
+from llm_reliability_analytics.storage.db import get_connection
 from llm_reliability_analytics.reporting.markdown import generate_run_markdown_report
-from llm_reliability_analytics.storage.duckdb_store import RunAggregatedSummary, fetch_results_for_run
+from llm_reliability_analytics.storage.duckdb_store import RunAggregatedSummary, fetch_results_for_run, create_test_run
 from llm_reliability_analytics.storage.evaluation_job_repository import (
     EvaluationJob,
     EvaluationJobCreate,
@@ -40,6 +46,7 @@ class EvaluationJobQueueProcessResult(BaseModel):
     requested_max_jobs: int
     processed_count: int
     results: list[EvaluationJobRunResult]
+    failures: list[dict[str, str]] = []
 
 
 class EvaluationJobQueueStatsResult(BaseModel):
@@ -122,7 +129,22 @@ class EvaluationJobNotFoundError(ValueError):
 
 def create_job(payload: EvaluationJobCreate) -> EvaluationJob:
     _validate_job_create_payload(payload)
-    return create_evaluation_job(payload)
+    cases, summary = load_test_cases(payload.input_path)
+    if not cases or summary.invalid_rows:
+        raise ValueError(f"Dataset must contain valid cases only ({summary.invalid_rows} invalid rows).")
+    if len({case.id for case in cases}) != len(cases):
+        raise ValueError("Dataset contains duplicate test case IDs.")
+    if payload.limit is not None:
+        cases = cases[:payload.limit]
+    if payload.dataset_version:
+        for case in cases:
+            case.dataset_version = payload.dataset_version
+    elif len({case.dataset_version for case in cases}) != 1:
+        raise ValueError("Dataset has mixed versions; provide an explicit dataset_version.")
+    payload = payload.model_copy(update={"dataset_version": cases[0].dataset_version})
+    snapshot = [case.model_dump(mode="json") for case in cases]
+    fingerprint = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return create_evaluation_job(payload, dataset_sha256=fingerprint, dataset_snapshot=snapshot)
 
 
 def duplicate_job(job_id: str) -> EvaluationJob:
@@ -148,14 +170,17 @@ def duplicate_job(job_id: str) -> EvaluationJob:
         client_name=source.client_name,
         project_name=source.project_name,
     )
-    duplicated = create_evaluation_job(payload)
+    if not source.dataset_snapshot:
+        return create_job(payload)
+    duplicated = create_evaluation_job(payload, dataset_sha256=source.dataset_sha256,
+                                      dataset_snapshot=source.dataset_snapshot, source_job_id=source.job_id)
     return duplicated
 
 
 def retry_job(job_id: str, queue: bool = False) -> EvaluationJob:
     duplicated = duplicate_job(job_id)
     if queue:
-        queued = update_evaluation_job(duplicated.job_id, status="queued")
+        queued = queue_job(duplicated.job_id)
         if queued is None:
             raise EvaluationJobNotFoundError(f"Evaluation job not found after retry queue update: {duplicated.job_id}")
         return queued
@@ -210,18 +235,40 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
     if job is None:
         raise EvaluationJobNotFoundError(f"Evaluation job not found: {job_id}")
 
-    if job.status == "running":
-        raise ValueError(f"Evaluation job is already running: {job_id}")
-    if job.status == "canceled":
-        raise ValueError(f"Evaluation job is canceled: {job_id}")
-    if job.linked_run_id:
-        raise ValueError(f"Evaluation job already executed: {job_id}")
-
+    if job.status not in {"draft", "queued"} or job.linked_run_id:
+        raise ValueError(f"Evaluation job cannot run from status={job.status}: {job_id}")
+    if not job.dataset_snapshot:
+        raise ValueError("Legacy job has no dataset snapshot. Duplicate it to validate current inputs.")
+    run_id = str(uuid4())
     started_at = datetime.now(timezone.utc)
-    update_evaluation_job(job_id, status="running", started_at=started_at, failure_reason=None)
-    refreshed = get_evaluation_job(job_id)
-    if refreshed is None:
-        raise EvaluationJobNotFoundError(f"Evaluation job not found after update: {job_id}")
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN TRANSACTION")
+        claimed = conn.execute(
+            "UPDATE evaluation_jobs SET status='running', linked_run_id=?, started_at=?, "
+            "updated_at=?, failure_reason=NULL, completed_at=NULL "
+            "WHERE job_id=? AND status IN ('draft','queued') AND linked_run_id IS NULL RETURNING job_id",
+            [run_id, started_at, started_at, job_id]).fetchone()
+        if not claimed:
+            raise ValueError("Job was already claimed or canceled. Reload its status.")
+        execution_run = create_test_run(
+            name=job.project_name.strip() or f"evaluation-job-{job_id[:8]}", model_name=job.model_name,
+            provider="ollama" if job.provider in {"ollama", "local"} else "mock",
+            dataset_version=job.dataset_version or "v1", evaluation_mode=job.evaluation_mode,
+            temperature=job.temperature, max_output_tokens=job.max_output_tokens,
+            repeat_count=job.repeat_count, mode="real_local" if job.provider in {"ollama", "local"} else "mock",
+            notes=job.notes, run_group_id=f"evaluation-job:{job_id}", repetition_index=1,
+            metadata={"job_id": job_id, "dataset_sha256": job.dataset_sha256,
+                      "configuration": job.model_dump(mode="json", exclude={"dataset_snapshot"}),
+                      "dataset_snapshot": job.dataset_snapshot},
+            run_id=run_id, connection=conn)
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+    refreshed = get_job(job_id)
 
     run_name = refreshed.project_name.strip() or f"evaluation-job-{job_id[:8]}"
     run_group_id = f"evaluation-job:{job_id}"
@@ -232,6 +279,8 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
     try:
         result = run_batch_workflow(
             input_path=refreshed.input_path,
+            prepared_cases=[TestCase.model_validate(case) for case in refreshed.dataset_snapshot],
+            execution_run=execution_run,
             run_name=run_name,
             model_name=refreshed.model_name,
             provider=refreshed.provider,
@@ -246,7 +295,8 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
             limit=refreshed.limit,
             repeats_per_case=refreshed.repeat_count,
         )
-    except Exception as exc:  # noqa: BLE001 - state transition must be persisted before bubbling error
+    except Exception as exc:  # noqa: BLE001 - persist failure before bubbling error
+        _finish_run(run_id, "failed")
         failed = update_evaluation_job(
             job_id,
             status="failed",
@@ -257,6 +307,7 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
             raise EvaluationJobNotFoundError(f"Evaluation job not found after failure update: {job_id}") from exc
         raise
 
+    _finish_run(run_id, "completed")
     completed = update_evaluation_job(
         job_id,
         status="completed",
@@ -278,7 +329,7 @@ def queue_job(job_id: str) -> EvaluationJob:
         raise ValueError(f"Evaluation job cannot be queued from status={job.status}: {job_id}")
     if job.status == "queued":
         return job
-    queued = update_evaluation_job(job_id, status="queued")
+    queued = update_evaluation_job(job_id, status="queued", queued_at=datetime.now(timezone.utc), expected_statuses=("draft",))
     if queued is None:
         raise EvaluationJobNotFoundError(f"Evaluation job not found after queue update: {job_id}")
     return queued
@@ -289,16 +340,21 @@ def process_queued_jobs(max_jobs: int = 10) -> EvaluationJobQueueProcessResult:
     queued_jobs = list_evaluation_jobs(
         limit=effective_max,
         status="queued",
-        sort_by="created_at",
+        sort_by="queued_at",
         sort_order="asc",
     )
     results: list[EvaluationJobRunResult] = []
+    failures = []
     for job in queued_jobs:
-        results.append(run_job(job.job_id))
+        try:
+            results.append(run_job(job.job_id))
+        except Exception as exc:
+            failures.append({"job_id": job.job_id, "error": str(exc)[:1000]})
     return EvaluationJobQueueProcessResult(
         requested_max_jobs=effective_max,
-        processed_count=len(results),
+        processed_count=len(results) + len(failures),
         results=results,
+        failures=failures,
     )
 
 
@@ -322,6 +378,7 @@ def cancel_job(job_id: str, reason: str = "") -> EvaluationJob:
         job_id,
         status="canceled",
         failure_reason=cancel_reason[:1000],
+        expected_statuses=("draft", "queued"),
         completed_at=datetime.now(timezone.utc),
     )
     if canceled is None:
@@ -443,9 +500,44 @@ def _require_run_id(job: EvaluationJob) -> str:
 
 def _validate_job_create_payload(payload: EvaluationJobCreate) -> None:
     try:
-        resolve_input_path(payload.input_path)
+        path = resolve_input_path(payload.input_path)
+        if not path.is_file() or path.suffix.lower() not in {".jsonl", ".csv"}:
+            raise ValueError("Dataset must be a JSONL or CSV file.")
+        if payload.provider == "mock" and payload.model_name not in {"mock-baseline", "mock-noisy", "mock-failing"}:
+            raise ValueError("Unsupported mock model.")
+        if payload.provider in {"ollama", "local"} and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", payload.model_name):
+            raise ValueError("Invalid Ollama model identifier; use a model tag such as llama3.2:1b.")
     except FileNotFoundError as exc:
         raise ValueError(str(exc)) from exc
 
     if payload.provider in {"ollama", "local"} and not payload.model_name.strip():
         raise ValueError(f"model_name is required when provider={payload.provider}")
+
+
+def _finish_run(run_id: str, status: str) -> None:
+    conn = get_connection()
+    try:
+        conn.execute("UPDATE test_runs SET status=?, finished_at=? WHERE id=?",
+                     [status, datetime.now(timezone.utc), run_id])
+    finally:
+        conn.close()
+
+
+def recover_interrupted_jobs() -> int:
+    """Called once at startup of the single supported DB-owning API process."""
+    conn = get_connection()
+    now = datetime.now(timezone.utc)
+    try:
+        conn.execute("BEGIN TRANSACTION")
+        rows = conn.execute("UPDATE evaluation_jobs SET status='failed', "
+                            "failure_reason='Backend stopped during execution; retry as a new job.', "
+                            "completed_at=?, updated_at=? WHERE status='running' RETURNING linked_run_id",
+                            [now, now]).fetchall()
+        conn.execute("UPDATE test_runs SET status='failed', finished_at=? WHERE status='running'", [now])
+        conn.execute("COMMIT")
+        return len(rows)
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()

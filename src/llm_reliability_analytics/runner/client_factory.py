@@ -35,4 +35,11 @@ def build_llm_client(
             timeout_seconds=timeout_seconds,
         )
 
+    if model_name == "mock-noisy":
+        mock_mode = "semi_random"
+    elif model_name == "mock-failing":
+        mock_mode = "semi_random"
+        failure_rate = 1.0
+
+    # Baseline and legacy model labels retain explicit direct-run mock settings.
     return MockLLMClient(mode=mock_mode, seed=seed, failure_rate=failure_rate)
