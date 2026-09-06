@@ -20,6 +20,10 @@ export type EvaluationJob = {
   client_name: string;
   project_name: string;
   linked_run_id: string | null;
+  source_job_id?: string | null;
+  dataset_sha256?: string | null;
+  dataset_snapshot?: string | null;
+  queued_at?: string | null;
   failure_reason: string | null;
   created_at: string;
   started_at: string | null;
@@ -49,6 +53,7 @@ export type QueueProcessResult = {
   requested_max_jobs: number;
   processed_count: number;
   results: JobRunResult[];
+  failures?: { job_id: string; error?: string; failure_reason?: string; detail?: string }[];
 };
 
 export type QueueStatsResult = {
@@ -73,6 +78,12 @@ export type JobSummaryResult = {
     accuracy: number;
     average_latency_ms: number;
     overall_reliability_score: number;
+    metric_version?: string;
+    repeated_case_count?: number;
+    schema_case_count?: number;
+    measurement_notes?: string[];
+    latency_sources?: string[];
+    unique_case_count?: number;
   };
 };
 
@@ -106,6 +117,9 @@ export type TraceRecord = {
   prompt: string | null;
   raw_output: string | null;
   normalized_output: string | null;
+  expected_answer: string | null;
+  oracle_details: Record<string, unknown> | null;
+  oracle_config: Record<string, unknown> | null;
   category: string | null;
   test_source: string | null;
   oracle_type: string | null;
@@ -142,10 +156,19 @@ export type JobClientReportPayload = {
   markdown_report: string;
 };
 
+export type DatasetOption = {
+  id: string;
+  label: string;
+  input_path: string;
+  dataset_version: string | null;
+  evaluation_mode: string;
+};
+
 export type JobOptionsResponse = {
   providers: string[];
   models_by_provider: Record<string, string[]>;
   dataset_paths: string[];
+  datasets: DatasetOption[];
   dataset_versions: string[];
   oracle_profiles: string[];
   oracle_types: string[];

@@ -3,25 +3,26 @@
 from __future__ import annotations
 
 from pathlib import Path
+from dataclasses import dataclass
+from urllib.parse import quote
 from typing import Literal
 
 import pandas as pd
 
-from llm_reliability_analytics.datasets.candidate_promoter import (
-    CandidatePromotionResult,
-    build_export_jsonl_path,
-    promote_candidates_to_test_cases,
-)
-from llm_reliability_analytics.models.domain import TestSource
-from llm_reliability_analytics.runner.client_factory import build_llm_client
-from llm_reliability_analytics.storage.candidate_repository import (
-    list_candidate_review_events,
-    list_candidate_test_cases,
-    update_candidate_status,
-    upsert_candidate_test_cases,
-)
+from frontend.services.api_client import APIClient, BackendAPIError
 from llm_reliability_analytics.test_authoring.models import CandidateStatus, CandidateTestCase
-from llm_reliability_analytics.test_authoring.service import CandidateAuthoringService
+
+
+@dataclass
+class CandidatePromotionResult:
+    requested: int
+    promoted: int
+    skipped_not_found: int
+    skipped_not_approved: int
+    promoted_ids: list[str]
+    skipped_ids: list[str]
+    exported_count: int = 0
+    export_path: str | None = None
 
 
 DEFAULT_AUTHORING_CATEGORIES: list[str] = [
@@ -44,25 +45,13 @@ def generate_candidates_and_store(
     max_output_tokens: int = 120,
     timeout_seconds: float = 20.0,
 ) -> list[CandidateTestCase]:
-    llm_client = None
-    if provider != "none":
-        resolved_model_name = model_name or ("mock-baseline" if provider == "mock" else None)
-        llm_client = build_llm_client(
-            provider=provider,
-            run_mode="real_local" if provider == "ollama" else "mock",
-            model_name=resolved_model_name,
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            timeout_seconds=timeout_seconds,
-        )
-
-    service = CandidateAuthoringService(llm_client=llm_client)
-    generated = service.generate_candidates(
-        categories=categories or DEFAULT_AUTHORING_CATEGORIES,
-        per_category=max(1, per_category),
-    )
-    upsert_candidate_test_cases(generated)
-    return generated
+    payload = APIClient().request("POST", "/candidates/generate", json={
+        "categories": categories or DEFAULT_AUTHORING_CATEGORIES,
+        "per_category": max(1, per_category), "provider": provider,
+        "model_name": model_name, "temperature": temperature,
+        "max_output_tokens": max_output_tokens, "timeout_seconds": timeout_seconds,
+    })
+    return [CandidateTestCase.model_validate(item) for item in payload["candidates"]]
 
 
 def list_candidates_frame(
@@ -70,7 +59,10 @@ def list_candidates_frame(
     category: str | None = None,
     limit: int = 1000,
 ) -> pd.DataFrame:
-    items = list_candidate_test_cases(status=status, category=category, max_rows=limit)
+    payload = APIClient().request("GET", "/candidates", params={
+        "status": status.value if status else None, "category": category, "limit": limit,
+    })
+    items = [CandidateTestCase.model_validate(item) for item in payload["items"]]
     rows = []
     for item in items:
         rows.append(
@@ -117,26 +109,23 @@ def set_candidate_status(
     reviewer: str = "",
     note: str = "",
 ) -> CandidateTestCase | None:
-    return update_candidate_status(
-        candidate_id=candidate_id,
-        new_status=new_status,
-        reviewer=reviewer,
-        note=note,
-    )
+    try:
+        payload = APIClient().request("POST", f"/candidates/{quote(candidate_id, safe='')}/status", json={
+            "new_status": new_status.value, "reviewer": reviewer, "note": note,
+        })
+    except BackendAPIError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
+    return CandidateTestCase.model_validate(payload["candidate"])
 
 
 def candidate_events_frame(candidate_id: str, limit: int = 100) -> pd.DataFrame:
-    events = list_candidate_review_events(candidate_id=candidate_id, max_rows=limit)
+    payload = APIClient().request("GET", f"/candidates/{quote(candidate_id, safe='')}/events", params={"limit": limit})
     rows = [
-        {
-            "event_id": event.event_id,
-            "old_status": event.old_status.value if event.old_status else "",
-            "new_status": event.new_status.value,
-            "reviewer": event.reviewer,
-            "note": event.note,
-            "created_at": event.created_at,
-        }
-        for event in events
+        {key: (event.get(key) or "") for key in
+         ["event_id", "old_status", "new_status", "reviewer", "note", "created_at"]}
+        for event in payload["events"]
     ]
     if not rows:
         return pd.DataFrame(columns=["event_id", "old_status", "new_status", "reviewer", "note", "created_at"])
@@ -150,20 +139,8 @@ def promote_candidates(
     export_to_jsonl: bool = True,
     project_root: Path | None = None,
 ) -> CandidatePromotionResult:
-    source_enum = TestSource(target_source)
-    export_path = None
-    if export_to_jsonl:
-        if project_root is None:
-            raise ValueError("project_root is required when export_to_jsonl=True")
-        export_path = build_export_jsonl_path(
-            project_root=project_root,
-            dataset_version=dataset_version,
-            target_source=source_enum,
-        )
-
-    return promote_candidates_to_test_cases(
-        candidate_ids=candidate_ids,
-        dataset_version=dataset_version,
-        target_source=source_enum,
-        export_jsonl_path=export_path,
-    )
+    payload = APIClient().request("POST", "/internal/candidates/promote", json={
+        "candidate_ids": candidate_ids, "dataset_version": dataset_version,
+        "target_source": target_source, "export_to_jsonl": export_to_jsonl,
+    })
+    return CandidatePromotionResult(**payload)

@@ -42,7 +42,47 @@ class ModelAggregateReport:
     report: ReliabilityReport
 
 
+class IncompatibleRunsError(ValueError):
+    """Raised before aggregating or ranking unlike execution configurations."""
+
+
 class MetricsAdapter:
+    def comparison_issues(self, runs_df: pd.DataFrame, results_df: pd.DataFrame,
+                          run_ids: list[str]) -> list[str]:
+        runs = runs_df[runs_df["run_id"].astype(str).isin(run_ids)]
+        issues = []
+        if len(runs) != len(set(run_ids)):
+            issues.append("missing run metadata")
+        for field in ["provider", "dataset_version", "evaluation_mode", "mode", "temperature",
+                      "max_output_tokens", "repeat_count", "dataset_fingerprint", "dataset_hash",
+                      "oracle_profile", "timeout_seconds", "seed"]:
+            if field in runs and runs[field].fillna("<unknown>").astype(str).nunique() > 1:
+                issues.append(field)
+        if "status" in runs and not runs["status"].eq("completed").all():
+            issues.append("only completed runs can be compared")
+        if "model_version" in runs and "model_name" in runs:
+            if any(group["model_version"].fillna("<unknown>").nunique() > 1
+                   for _, group in runs.groupby("model_name")):
+                issues.append("model_version")
+        columns = [key for key in ["test_case_id", "prompt", "expected_answer", "oracle_type", "test_source"]
+                   if key in results_df]
+        evidence = []
+        for run_id in run_ids:
+            rows = results_df[results_df["run_id"].astype(str) == str(run_id)]
+            if rows.empty:
+                issues.append(f"no stored evidence for {run_id}")
+            evidence.append(set(map(tuple, rows[columns].fillna("").astype(str).to_numpy())))
+        if evidence and any(item != evidence[0] for item in evidence[1:]):
+            issues.append("test case coverage/evidence")
+        return issues
+
+    def _require_compatible(self, runs_df: pd.DataFrame, results_df: pd.DataFrame,
+                            run_ids: list[str]) -> None:
+        issues = self.comparison_issues(runs_df, results_df, run_ids)
+        if issues:
+            raise IncompatibleRunsError("Incompatible runs: " + ", ".join(issues)
+                                        + ". Select matching configurations and case coverage.")
+
     def run_selector_options(self, runs_df: pd.DataFrame, results_df: pd.DataFrame) -> pd.DataFrame:
         if runs_df.empty:
             run_ids = sorted(results_df["run_id"].dropna().astype(str).unique().tolist()) if not results_df.empty else []
@@ -197,6 +237,7 @@ class MetricsAdapter:
         baseline_run_id: str,
         candidate_run_id: str,
     ) -> RunComparisonBundle:
+        self._require_compatible(runs_df, results_df, [baseline_run_id, candidate_run_id])
         baseline_report = self.build_report_for_run(results_df, baseline_run_id, runs_df)
         candidate_report = self.build_report_for_run(results_df, candidate_run_id, runs_df)
 
@@ -244,6 +285,8 @@ class MetricsAdapter:
             return []
 
         runs = runs.sort_values(["created_at", "run_id"], ascending=[False, False])
+        selected = runs.groupby("model_name", group_keys=False).head(max(1, int(runs_per_model)))
+        self._require_compatible(runs, results_df, selected["run_id"].astype(str).tolist())
         reports: list[ModelAggregateReport] = []
 
         for model_name, group in runs.groupby("model_name"):

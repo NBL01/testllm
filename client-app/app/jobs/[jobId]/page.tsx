@@ -1,681 +1,300 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  cancelJob,
-  duplicateJob,
-  getJob,
-  getJobClientReport,
-  getJobFailedCases,
-  getJobReport,
-  getJobSummary,
-  getJobTraces,
-  processQueue,
-  queueJob,
-  retryJob,
-  runJob
+  cancelJob, duplicateJob, getJob, getJobClientReport, getJobFailedCases, getJobFailedCasesCsv,
+  getJobReport, getJobSummary, getJobTraces, queueJob, retryJob, runJob
 } from "@/lib/api";
-import type {
-  EvaluationJob,
-  FailedCase,
-  JobReportPayload,
-  JobSummaryResult,
-  TraceRecord
-} from "@/lib/types";
+import { saveDownload } from "@/lib/apiClient";
+import { useRemoteResource } from "@/lib/useRemoteResource";
+import type { TraceRecord } from "@/lib/types";
 
-function statusClass(status: string): string {
-  if (status === "running") return "pill status-running";
-  if (status === "completed") return "pill status-completed";
-  if (status === "failed") return "pill status-failed";
-  if (status === "canceled") return "pill status-canceled";
-  return "pill";
-}
-
-function asPct(value: number | undefined): string {
-  if (typeof value !== "number") return "n/a";
-  return `${(value * 100).toFixed(2)}%`;
+function asNumber(value: number | undefined, digits = 3): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toFixed(digits) : "Not measured";
 }
 
 function asDate(value: string | null): string {
   if (!value) return "n/a";
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString();
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
-function asDuration(startedAt: string | null, completedAt: string | null): string {
-  if (!startedAt || !completedAt) return "n/a";
-  const started = new Date(startedAt).getTime();
-  const completed = new Date(completedAt).getTime();
-  if (Number.isNaN(started) || Number.isNaN(completed) || completed < started) return "n/a";
-  const totalSeconds = Math.floor((completed - started) / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}m ${seconds}s`;
+function asDuration(start: string | null, end: string | null): string {
+  if (!start || !end) return "n/a";
+  const seconds = Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 1000);
+  return Number.isFinite(seconds) && seconds >= 0 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : "n/a";
+}
+
+function PanelError({ label, error }: { label: string; error: string }) {
+  return error ? <p className="error" role="alert">{label}: {error} Use Refresh to retry. Previously loaded data, if shown, may be stale.</p> : null;
+}
+
+function Evidence({ trace }: { trace: TraceRecord }) {
+  return (
+    <details className="evidence">
+      <summary>
+        <strong>{trace.test_case_id}</strong> / attempt {trace.attempt_index}{" "}
+        <span className={`pill status-${trace.is_correct ? "completed" : "failed"}`}>{trace.is_correct ? "passed" : "failed"}</span>
+        {" | "}{trace.oracle_type || "Oracle unavailable"}{" | score "}{asNumber(trace.score)}
+      </summary>
+      <p className="meta">Trace: <code>{trace.trace_id}</code> | Run: <code>{trace.run_id}</code><br />
+        Category: {trace.category ?? "n/a"} | Source: {trace.test_source ?? "n/a"} | {asDate(trace.created_at)}</p>
+      <div className="form-grid">
+        <div><strong>Expected answer</strong><pre>{trace.expected_answer ?? "Unavailable in this evidence record; do not infer from model output."}</pre></div>
+        <div><strong>Actual / raw output</strong><pre>{trace.raw_output ?? "No output recorded"}</pre></div>
+      </div>
+      <strong>Normalized output</strong><pre>{trace.normalized_output ?? "Not recorded"}</pre>
+      <strong>Prompt</strong><pre>{trace.prompt ?? "Not recorded"}</pre>
+      <p><strong>Oracle:</strong> {trace.oracle_type ?? "Not recorded"} | <strong>Score:</strong> {asNumber(trace.score)}</p>
+      <p><strong>Error:</strong> {trace.error_type ?? "None recorded"}</p>
+      <p><strong>Explanation:</strong> {trace.explanation ?? "Not recorded"}</p>
+      <div className="form-grid">
+        <div><strong>Effective oracle configuration</strong><pre>{trace.oracle_config == null ? "Unavailable (legacy evidence)" : JSON.stringify(trace.oracle_config, null, 2)}</pre></div>
+        <div><strong>Oracle details</strong><pre>{trace.oracle_details == null ? "Unavailable (legacy evidence)" : JSON.stringify(trace.oracle_details, null, 2)}</pre></div>
+      </div>
+    </details>
+  );
 }
 
 export default function JobDetailPage({ params }: { params: { jobId: string } }) {
+  // A route change owns fresh action locks, filters, and async lifetimes.
+  return <JobDetail key={params.jobId} jobId={params.jobId} />;
+}
+
+function JobDetail({ jobId }: { jobId: string }) {
   const router = useRouter();
-  const [job, setJob] = useState<EvaluationJob | null>(null);
-  const [summary, setSummary] = useState<JobSummaryResult | null>(null);
-  const [failedCases, setFailedCases] = useState<FailedCase[]>([]);
-  const [failedTotal, setFailedTotal] = useState(0);
+  const [refresh, setRefresh] = useState(0);
   const [failedOffset, setFailedOffset] = useState(0);
-  const [traces, setTraces] = useState<TraceRecord[]>([]);
-  const [tracesTotal, setTracesTotal] = useState(0);
   const [tracesOffset, setTracesOffset] = useState(0);
-  const [report, setReport] = useState<JobReportPayload | null>(null);
   const [traceCaseInput, setTraceCaseInput] = useState("");
   const [traceCaseFilter, setTraceCaseFilter] = useState("");
   const [onlyFailedTraces, setOnlyFailedTraces] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [queueing, setQueueing] = useState(false);
-  const [duplicating, setDuplicating] = useState(false);
-  const [retrying, setRetrying] = useState(false);
-  const [canceling, setCanceling] = useState(false);
-  const [processingQueue, setProcessingQueue] = useState(false);
-  const [error, setError] = useState("");
+  const [action, setAction] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [exportError, setExportError] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [copied, setCopied] = useState(false);
-  const failedPageSize = 20;
-  const tracesPageSize = 20;
+  const actionLock = useRef(false);
+  const exportLock = useRef(false);
+  const mounted = useRef(true);
+  const [poll, setPoll] = useState(false);
+  const pageSize = 20;
 
-  const canRunNow = useMemo(() => {
-    if (!job) return false;
-    return job.status === "draft" && !job.linked_run_id;
-  }, [job]);
-
-  const canQueue = useMemo(() => {
-    if (!job) return false;
-    return job.status === "draft" && !job.linked_run_id;
-  }, [job]);
-
-  const canProcessQueue = useMemo(() => {
-    if (!job) return false;
-    return job.status === "queued" && !job.linked_run_id;
-  }, [job]);
-
-  const canCancel = useMemo(() => {
-    if (!job) return false;
-    return ["draft", "queued"].includes(job.status) && !job.linked_run_id;
-  }, [job]);
-
-  async function loadAll(activeTraceCaseFilter?: string) {
-    setLoading(true);
-    setError("");
-    try {
-      const loadedJob = await getJob(params.jobId);
-      setJob(loadedJob);
-
-      if (loadedJob.linked_run_id) {
-        const normalizedCaseFilter = (activeTraceCaseFilter ?? traceCaseFilter).trim();
-        const [summaryData, failedData, tracesData, reportData] = await Promise.all([
-          getJobSummary(params.jobId),
-          getJobFailedCases(params.jobId, {
-            limit: failedPageSize,
-            offset: failedOffset
-          }),
-          getJobTraces(params.jobId, {
-            limit: tracesPageSize,
-            offset: tracesOffset,
-            onlyFailed: onlyFailedTraces,
-            testCaseId: normalizedCaseFilter || undefined
-          }),
-          getJobReport(params.jobId)
-        ]);
-        setSummary(summaryData);
-        setFailedCases(failedData.items);
-        setFailedTotal(failedData.total);
-        setTraces(tracesData.items);
-        setTracesTotal(tracesData.total);
-        setReport(reportData);
-      } else {
-        setSummary(null);
-        setFailedCases([]);
-        setFailedTotal(0);
-        setTraces([]);
-        setTracesTotal(0);
-        setReport(null);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load job details.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const jobResource = useRemoteResource(jobId, () => getJob(jobId), refresh, action || poll ? 3000 : 0);
+  const job = jobResource.data;
+  const reviewKey = job?.linked_run_id ? `${jobId}:${job.linked_run_id}` : null;
+  const reviewPoll = action || poll ? 3000 : 0;
+  const reviewRevision = `${reviewKey}:${job?.status}`;
+  const summaryResource = useRemoteResource(reviewKey ? `${reviewRevision}:summary` : null, () => getJobSummary(jobId), refresh, reviewPoll);
+  const failedResource = useRemoteResource(reviewKey ? `${reviewRevision}:failed:${failedOffset}` : null,
+    () => getJobFailedCases(jobId, { limit: pageSize, offset: failedOffset }), refresh, reviewPoll);
+  const tracesResource = useRemoteResource(reviewKey ? JSON.stringify([reviewRevision, tracesOffset, onlyFailedTraces, traceCaseFilter]) : null,
+    () => getJobTraces(jobId, { limit: pageSize, offset: tracesOffset, onlyFailed: onlyFailedTraces, testCaseId: traceCaseFilter }), refresh, reviewPoll);
+  const reportResource = useRemoteResource(reviewKey ? `${reviewRevision}:report` : null, () => getJobReport(jobId), refresh, reviewPoll);
+  const summary = summaryResource.data;
+  const failedCases = failedResource.data?.items || [];
+  const failedTotal = failedResource.data?.total || 0;
+  const traces = tracesResource.data?.items || [];
+  const tracesTotal = tracesResource.data?.total || 0;
+  const report = reportResource.data;
+  const canRun = !!job && ["draft", "queued"].includes(job.status) && !job.linked_run_id;
+  const canQueue = job?.status === "draft" && !job.linked_run_id;
+  const canRetry = !!job && ["failed", "canceled", "completed"].includes(job.status);
+  const busy = !!action || !job || !!jobResource.error || jobResource.loading;
 
   useEffect(() => {
-    void loadAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.jobId, traceCaseFilter, onlyFailedTraces, failedOffset, tracesOffset]);
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  useEffect(() => { setPoll(!!job && ["queued", "running"].includes(job.status)); }, [job?.status]);
 
-  useEffect(() => {
-    if (!job || !["queued", "running"].includes(job.status)) return;
-    const timer = window.setInterval(() => {
-      void loadAll();
-    }, 3000);
-    return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [job?.status, params.jobId]);
+  function refreshAll() { setRefresh(value => value + 1); }
 
-  async function handleRun() {
-    setRunning(true);
-    setError("");
+  async function performAction(label: string, execute: () => Promise<unknown>, navigate = false) {
+    if (actionLock.current || busy) return;
+    actionLock.current = true;
+    setAction(label);
+    setActionError("");
     try {
-      await runJob(params.jobId);
-      await loadAll(traceCaseFilter);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to run evaluation job.");
+      const result = await execute();
+      if (mounted.current && navigate) router.push(`/jobs/${(result as { job_id: string }).job_id}`);
+    } catch (error) {
+      if (mounted.current) setActionError(error instanceof Error ? error.message : `${label} failed.`);
     } finally {
-      setRunning(false);
+      // Even a rejected POST can have changed persisted state.
+      if (mounted.current) { refreshAll(); setAction(""); }
+      actionLock.current = false;
     }
   }
 
-  async function handleQueue() {
-    setQueueing(true);
-    setError("");
-    try {
-      await queueJob(params.jobId);
-      await loadAll(traceCaseFilter);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to queue evaluation job.");
+  function handleCancel() {
+    if (actionLock.current || busy || !canRun) return;
+    const reason = window.prompt("Optional cancel reason", "Canceled by user.");
+    if (reason === null) return;
+    void performAction("Canceling", () => cancelJob(jobId, reason));
+  }
+
+  async function exportFile(execute: () => Promise<void>) {
+    if (exportLock.current) return;
+    exportLock.current = true;
+    setExporting(true);
+    setExportError("");
+    setCopied(false);
+    try { await execute(); }
+    catch (error) {
+      if (mounted.current) setExportError(`${error instanceof Error ? error.message : "Export failed"}. You can retry the download or select the report text below.`);
     } finally {
-      setQueueing(false);
+      exportLock.current = false;
+      if (mounted.current) setExporting(false);
     }
   }
 
-  async function handleProcessQueue() {
-    setProcessingQueue(true);
-    setError("");
-    try {
-      await processQueue(1);
-      await loadAll(traceCaseFilter);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to process queued jobs.");
-    } finally {
-      setProcessingQueue(false);
-    }
-  }
-
-  async function handleCancel() {
-    const reason = window.prompt("Optional cancel reason", "Canceled by user.") || "";
-    setCanceling(true);
-    setError("");
-    try {
-      await cancelJob(params.jobId, reason);
-      await loadAll(traceCaseFilter);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to cancel evaluation job.");
-    } finally {
-      setCanceling(false);
-    }
-  }
-
-  async function handleDuplicate() {
-    setDuplicating(true);
-    setError("");
-    try {
-      const duplicated = await duplicateJob(params.jobId);
-      router.push(`/jobs/${duplicated.job_id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to duplicate evaluation job.");
-    } finally {
-      setDuplicating(false);
-    }
-  }
-
-  async function handleRetryQueued() {
-    setRetrying(true);
-    setError("");
-    try {
-      const retried = await retryJob(params.jobId, true);
-      router.push(`/jobs/${retried.job_id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to retry evaluation job.");
-    } finally {
-      setRetrying(false);
-    }
-  }
-
-  async function copyReport() {
-    if (!report?.markdown_report) return;
-    await navigator.clipboard.writeText(report.markdown_report);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1200);
-  }
-
-  function downloadReport() {
-    if (!report?.markdown_report) return;
-    const blob = new Blob([report.markdown_report], { type: "text/markdown;charset=utf-8" });
-    const link = document.createElement("a");
-    const objectUrl = URL.createObjectURL(blob);
-    const runLabel = report.run_id || params.jobId;
-    link.href = objectUrl;
-    link.download = `evaluation-report-${runLabel}.md`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(objectUrl);
-  }
-
-  async function downloadClientJsonReport() {
-    try {
-      const payload = await getJobClientReport(params.jobId, 25);
-      const body = JSON.stringify(payload, null, 2);
-      const blob = new Blob([body], { type: "application/json;charset=utf-8" });
-      const link = document.createElement("a");
-      const objectUrl = URL.createObjectURL(blob);
-      const runLabel = payload.run_id || params.jobId;
-      link.href = objectUrl;
-      link.download = `evaluation-client-report-${runLabel}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(objectUrl);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to download client report.");
-    }
-  }
-
-  async function downloadFailedCasesCsv() {
-    try {
-      const failedData = await getJobFailedCases(params.jobId, {
-        limit: 5000,
-        offset: 0
-      });
-      const headers = [
-        "test_case_id",
-        "attempt_index",
-        "category",
-        "score",
-        "error_type",
-        "explanation",
-        "expected_answer",
-        "actual_answer",
-        "latency_ms",
-        "oracle_type",
-        "test_source"
-      ];
-      const escapeCell = (value: unknown): string => {
-        const text = String(value ?? "");
-        if (text.includes(",") || text.includes("\"") || text.includes("\n")) {
-          return `"${text.replaceAll("\"", "\"\"")}"`;
-        }
-        return text;
-      };
-      const rows = failedData.items.map((item) =>
-        [
-          item.test_case_id,
-          item.attempt_index,
-          item.category || "",
-          item.score,
-          item.error_type || "",
-          item.explanation || "",
-          item.expected_answer || "",
-          item.actual_answer || "",
-          item.latency_ms,
-          item.oracle_type || "",
-          item.test_source || ""
-        ]
-          .map(escapeCell)
-          .join(",")
-      );
-      const csv = [headers.join(","), ...rows].join("\n");
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-      const link = document.createElement("a");
-      const objectUrl = URL.createObjectURL(blob);
-      link.href = objectUrl;
-      link.download = `evaluation-failed-cases-${params.jobId}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(objectUrl);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to download failed cases CSV.");
-    }
-  }
+  const emptyEvidence = job?.status === "draft" ? "This draft has not run; no evidence has been measured."
+    : job?.status === "queued" ? "This job is queued and has not produced evidence yet."
+    : job?.status === "running" || action === "Running" ? "Evaluation is in progress. Evidence may be partial; this view refreshes automatically."
+    : job?.status === "failed" ? "The evaluation failed. No evidence is available in this view; see the persisted failure reason above."
+    : job?.status === "canceled" ? "The job was canceled before evaluation."
+    : "No matching evidence was recorded.";
 
   return (
     <main className="page">
       <section className="hero">
-        <div>
-          <h1>Evaluation Job Detail</h1>
-          <p>Job ID: <code>{params.jobId}</code></p>
-        </div>
+        <div><h1>Evaluation Job Detail</h1><p>Job ID: <code>{jobId}</code></p></div>
         <div className="btn-row">
-          <button className="btn btn-secondary" onClick={() => void loadAll()} type="button">
-            Refresh
-          </button>
-          <button className="btn btn-secondary" disabled={duplicating} onClick={() => void handleDuplicate()} type="button">
-            {duplicating ? "Duplicating..." : "Duplicate Job"}
-          </button>
-          <button className="btn btn-secondary" disabled={retrying} onClick={() => void handleRetryQueued()} type="button">
-            {retrying ? "Retrying..." : "Retry + Queue"}
-          </button>
-          {canRunNow && (
-            <button className="btn btn-primary" disabled={running} onClick={() => void handleRun()} type="button">
-              {running ? "Running..." : "Run Evaluation"}
-            </button>
-          )}
-          {canQueue && (
-            <button className="btn btn-secondary" disabled={queueing} onClick={() => void handleQueue()} type="button">
-              {queueing ? "Queueing..." : "Queue Job"}
-            </button>
-          )}
-          {canProcessQueue && (
-            <button
-              className="btn btn-primary"
-              disabled={processingQueue}
-              onClick={() => void handleProcessQueue()}
-              type="button"
-            >
-              {processingQueue ? "Processing..." : "Process Queue"}
-            </button>
-          )}
-          {canCancel && (
-            <button className="btn btn-secondary" disabled={canceling} onClick={() => void handleCancel()} type="button">
-              {canceling ? "Canceling..." : "Cancel Job"}
-            </button>
-          )}
-          <Link className="btn btn-secondary" href="/jobs">
-            Back to Jobs
-          </Link>
+          <button className="btn btn-secondary" onClick={refreshAll} type="button">Refresh</button>
+          <button className="btn btn-secondary" disabled={busy || job?.status === "running"} onClick={() => void performAction("Duplicating", () => duplicateJob(jobId), true)} type="button">Duplicate Job</button>
+          {canRetry && <button className="btn btn-secondary" disabled={busy} onClick={() => void performAction("Retrying", () => retryJob(jobId, true), true)} type="button">Retry + Queue New Job</button>}
+          {canRun && <button className="btn btn-primary" disabled={busy} onClick={() => void performAction("Running", () => runJob(jobId))} type="button">{job?.status === "queued" ? "Run This Queued Job" : "Run Evaluation"}</button>}
+          {canQueue && <button className="btn btn-secondary" disabled={busy} onClick={() => void performAction("Queueing", () => queueJob(jobId))} type="button">Queue Job</button>}
+          {canRun && <button className="btn btn-secondary" disabled={busy} onClick={handleCancel} type="button">Cancel Job</button>}
+          <Link className="btn btn-secondary" href="/jobs">Back to Jobs</Link>
         </div>
       </section>
+      {action && <p className="meta" role="status">{action}... Conflicting actions are locked; persisted status continues refreshing.</p>}
+      {jobResource.loading && <p className="meta" role="status">{job ? "Refreshing job status..." : "Loading job detail..."}</p>}
+      <PanelError label="Job" error={jobResource.error} />
+      {actionError && <p className="error" role="alert">{actionError}</p>}
+      {job && <div className="grid">
+        <section className="panel grid">
+          <div className="btn-row">
+            <span className={`pill status-${job.status}`}>{job.status}</span>
+            {job.linked_run_id && <span className="pill">run: {job.linked_run_id}</span>}
+            {(poll || action) && <span className="pill">auto-refresh 3s</span>}
+          </div>
+          <div className="form-grid">
+            <div><strong>Provider / model</strong><div className="meta">{job.provider} / <code>{job.model_name}</code></div></div>
+            <div><strong>Dataset / mode</strong><div className="meta"><code>{job.input_path}</code><br />{job.dataset_version || "dataset-defined"} / {job.evaluation_mode}</div></div>
+            <div><strong>Oracle profile</strong><div className="meta">{job.oracle_profile} (metadata only; dataset-defined scoring)</div></div>
+            <div><strong>Submitted by</strong><div className="meta">{job.submitted_by || "n/a"}</div></div>
+            <div><strong>Team / client</strong><div className="meta">{job.team_name || "n/a"} / {job.client_name || "n/a"}</div></div>
+            <div><strong>Project</strong><div className="meta">{job.project_name || "n/a"}</div></div>
+            <div><strong>Submitted at</strong><div className="meta">{asDate(job.created_at)}</div></div>
+            <div><strong>Queued at</strong><div className="meta">{asDate(job.queued_at ?? null)}</div></div>
+            <div><strong>Started at</strong><div className="meta">{asDate(job.started_at)}</div></div>
+            <div><strong>Completed at</strong><div className="meta">{asDate(job.completed_at)}</div></div>
+            <div><strong>Last updated</strong><div className="meta">{asDate(job.updated_at)}</div></div>
+            <div><strong>Run duration</strong><div className="meta">{asDuration(job.started_at, job.completed_at)}</div></div>
+          </div>
+          {job.source_job_id && <p className="meta">Source job: <Link href={`/jobs/${job.source_job_id}`}><u>{job.source_job_id}</u></Link></p>}
+          {job.dataset_sha256 && <p className="meta">Frozen dataset SHA-256: <code>{job.dataset_sha256}</code></p>}
+          {job.failure_reason && <p className="error">Failure reason: {job.failure_reason}</p>}
+          {job.notes && <p className="meta">Notes: {job.notes}</p>}
+        </section>
 
-      {loading && <p className="meta">Loading job detail...</p>}
-      {error && <p className="error">{error}</p>}
-
-      {job && !loading && (
-        <div className="grid">
-          <section className="panel grid">
-            <div className="btn-row">
-              <span className={statusClass(job.status)}>{job.status}</span>
-              {job.linked_run_id && <span className="pill">run: {job.linked_run_id}</span>}
-              {["queued", "running"].includes(job.status) && <span className="pill">auto-refresh 3s</span>}
-            </div>
+        <section className="panel">
+          <h2>Summary Metrics</h2>
+          <PanelError label="Summary" error={summaryResource.error} />
+          {summary ? <>
             <div className="form-grid">
-              <div>
-                <strong>Provider / model</strong>
-                <div className="meta">
-                  {job.provider} / <code>{job.model_name}</code>
-                </div>
-              </div>
-              <div>
-                <strong>Dataset / mode</strong>
-                <div className="meta">
-                  {job.dataset_version || "auto"} / {job.evaluation_mode}
-                </div>
-              </div>
-              <div>
-                <strong>Oracle profile</strong>
-                <div className="meta">{job.oracle_profile}</div>
-              </div>
-              <div>
-                <strong>Submitted by</strong>
-                <div className="meta">{job.submitted_by || "n/a"}</div>
-              </div>
-              <div>
-                <strong>Team / client</strong>
-                <div className="meta">
-                  {job.team_name || "n/a"} / {job.client_name || "n/a"}
-                </div>
-              </div>
-              <div>
-                <strong>Project</strong>
-                <div className="meta">{job.project_name || "n/a"}</div>
-              </div>
-              <div>
-                <strong>Submitted at</strong>
-                <div className="meta">{asDate(job.created_at)}</div>
-              </div>
-              <div>
-                <strong>Started at</strong>
-                <div className="meta">{asDate(job.started_at)}</div>
-              </div>
-              <div>
-                <strong>Completed at</strong>
-                <div className="meta">{asDate(job.completed_at)}</div>
-              </div>
-              <div>
-                <strong>Last updated</strong>
-                <div className="meta">{asDate(job.updated_at)}</div>
-              </div>
-              <div>
-                <strong>Run duration</strong>
-                <div className="meta">{asDuration(job.started_at, job.completed_at)}</div>
-              </div>
+              <div><strong>Attempts</strong><div>{summary.report.total_test_cases}</div></div>
+              <div><strong>Unique cases</strong><div>{summary.report.unique_case_count ?? "Not reported"}</div></div>
+              <div><strong>Passed attempts</strong><div>{summary.report.passed}</div></div>
+              <div><strong>Failed attempts</strong><div>{summary.report.failed}</div></div>
+              <div><strong>Accuracy</strong><div>{asNumber(summary.report.accuracy * 100, 2)}%</div></div>
+              <div><strong>Avg latency</strong><div>{asNumber(summary.report.average_latency_ms, 2)} ms</div></div>
+              <div><strong>Reliability heuristic</strong><div>{asNumber(summary.report.overall_reliability_score)}</div></div>
             </div>
-            {job.failure_reason && <p className="error">Failure reason: {job.failure_reason}</p>}
-          </section>
+            <p className="meta">Metric version: <code>{summary.report.metric_version ?? "Not reported; eligibility is unknown"}</code>. A heuristic score is not a guarantee of reliability.</p>
+            <p className="meta">Repeatability: {summary.report.repeated_case_count == null ? "eligibility not reported" : summary.report.repeated_case_count === 0 ? "not measured (no repeated cases)" : `${summary.report.repeated_case_count} repeated cases eligible`}.</p>
+            <p className="meta">Schema compliance: {summary.report.schema_case_count == null ? "eligibility not reported" : summary.report.schema_case_count === 0 ? "not measured (no schema cases)" : `${summary.report.schema_case_count} schema cases eligible`}.</p>
+            <p className="meta">Latency sources: {summary.report.latency_sources?.join(", ") || "not reported"}. {job.provider === "mock" && "Mock latency is synthetic, not real model performance."}</p>
+            {!!summary.report.measurement_notes?.length && <ul className="meta">{summary.report.measurement_notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
+            {job.status !== "completed" && <p className="meta">Partial evaluation: these metrics are not a completed-run result.</p>}
+          </> : !summaryResource.error && <p className="meta">{summaryResource.loading ? "Loading summary..." : emptyEvidence}</p>}
+        </section>
 
-          {summary && (
-            <section className="panel">
-              <h2>Summary Metrics</h2>
+        <section className="panel">
+          <h2>Failed Attempts ({failedTotal})</h2>
+          <PanelError label="Failed attempts" error={failedResource.error} />
+          <p className="meta">Showing {failedCases.length ? failedOffset + 1 : 0}-{failedCases.length ? failedOffset + failedCases.length : 0} of {failedTotal}</p>
+          <div className="btn-row">
+            <button className="btn btn-secondary" disabled={failedResource.loading || failedOffset === 0} onClick={() => setFailedOffset(value => Math.max(0, value - pageSize))} type="button">Previous</button>
+            <button className="btn btn-secondary" disabled={failedResource.loading || failedOffset + pageSize >= failedTotal} onClick={() => setFailedOffset(value => value + pageSize)} type="button">Next</button>
+          </div>
+          {!failedCases.length ? !failedResource.error && <p className="meta">{failedResource.loading ? "Loading failed attempts..." : job.status === "completed" && failedResource.data ? "No failed attempts on this page." : emptyEvidence}</p> :
+            <div className="grid evidence-list">{failedCases.map(item => <details className="evidence" key={`${item.test_case_id}:${item.attempt_index}`}>
+              <summary><strong>{item.test_case_id}</strong> / attempt {item.attempt_index} | {item.error_type ?? "Incorrect answer"} | score {asNumber(item.score)}</summary>
+              <p className="meta">Category: {item.category ?? "n/a"} | Source: {item.test_source ?? "n/a"} | Oracle: {item.oracle_type ?? "n/a"} | Latency: {asNumber(item.latency_ms, 2)} ms</p>
               <div className="form-grid">
-                <div>
-                  <strong>Total</strong>
-                  <div>{summary.report.total_test_cases}</div>
-                </div>
-                <div>
-                  <strong>Passed</strong>
-                  <div>{summary.report.passed}</div>
-                </div>
-                <div>
-                  <strong>Failed</strong>
-                  <div>{summary.report.failed}</div>
-                </div>
-                <div>
-                  <strong>Accuracy</strong>
-                  <div>{asPct(summary.report.accuracy)}</div>
-                </div>
-                <div>
-                  <strong>Avg latency</strong>
-                  <div>{summary.report.average_latency_ms.toFixed(2)} ms</div>
-                </div>
-                <div>
-                  <strong>Reliability score</strong>
-                  <div>{summary.report.overall_reliability_score.toFixed(3)}</div>
-                </div>
+                <div><strong>Expected answer</strong><pre>{item.expected_answer ?? "Not recorded"}</pre></div>
+                <div><strong>Actual answer</strong><pre>{item.actual_answer ?? "No output recorded"}</pre></div>
               </div>
-            </section>
-          )}
+              <p><strong>Explanation:</strong> {item.explanation ?? "Not recorded"}</p>
+              <a className="btn btn-secondary" href="#oracle-traces" onClick={() => {
+                setTraceCaseInput(item.test_case_id); setTraceCaseFilter(item.test_case_id); setTracesOffset(0); setOnlyFailedTraces(false);
+              }}>View Case Traces (attempt {item.attempt_index})</a>
+            </details>)}</div>}
+        </section>
 
-          <section className="panel">
-            <h2>Failed Cases ({failedTotal})</h2>
-            <p className="meta">
-              Showing {failedTotal === 0 ? 0 : failedOffset + 1}-{failedOffset + failedCases.length} of {failedTotal}
-            </p>
-            <div className="btn-row" style={{ marginBottom: "0.6rem" }}>
-              <button
-                className="btn btn-secondary"
-                disabled={loading || failedOffset === 0}
-                onClick={() => setFailedOffset((prev) => Math.max(0, prev - failedPageSize))}
-                type="button"
-              >
-                Previous
-              </button>
-              <button
-                className="btn btn-secondary"
-                disabled={loading || failedOffset + failedCases.length >= failedTotal}
-                onClick={() => setFailedOffset((prev) => prev + failedPageSize)}
-                type="button"
-              >
-                Next
-              </button>
-            </div>
-            {failedCases.length === 0 ? (
-              <p className="meta">No failed cases found for this job.</p>
-            ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Case</th>
-                      <th>Category</th>
-                      <th>Score</th>
-                      <th>Error</th>
-                      <th>Explanation</th>
-                      <th>Trace</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {failedCases.map((item) => (
-                      <tr key={`${item.test_case_id}:${item.attempt_index}`}>
-                        <td>
-                          <code>{item.test_case_id}</code>
-                          <div className="meta">attempt {item.attempt_index}</div>
-                        </td>
-                        <td>{item.category || "n/a"}</td>
-                        <td>{item.score.toFixed(3)}</td>
-                        <td>{item.error_type || "n/a"}</td>
-                        <td>{item.explanation || "n/a"}</td>
-                        <td>
-                          <button
-                            className="btn btn-secondary"
-                            onClick={() => {
-                              setTraceCaseInput(item.test_case_id);
-                              setTraceCaseFilter(item.test_case_id);
-                              setTracesOffset(0);
-                            }}
-                            type="button"
-                          >
-                            View Traces
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+        <section className="panel" id="oracle-traces">
+          <h2>Oracle Traces ({tracesTotal})</h2>
+          <div className="btn-row">
+            <label>Filter case<input className="input" placeholder="test_case_id" value={traceCaseInput} onChange={event => setTraceCaseInput(event.target.value)} /></label>
+            <label className="checkbox-label"><input type="checkbox" checked={onlyFailedTraces} onChange={event => { setOnlyFailedTraces(event.target.checked); setTracesOffset(0); }} />Failed only</label>
+            <button className="btn btn-secondary" onClick={() => { setTraceCaseFilter(traceCaseInput.trim()); setTracesOffset(0); }} type="button">Apply Filter</button>
+            <button className="btn btn-secondary" onClick={() => { setTraceCaseInput(""); setTraceCaseFilter(""); setTracesOffset(0); }} type="button">Clear Filter</button>
+          </div>
+          <PanelError label="Traces" error={tracesResource.error} />
+          {traceCaseFilter && <p className="meta">Active case: <code>{traceCaseFilter}</code>. Match the attempt index to the failed attempt above.</p>}
+          <p className="meta">Showing {traces.length ? tracesOffset + 1 : 0}-{traces.length ? tracesOffset + traces.length : 0} of {tracesTotal}</p>
+          <div className="btn-row">
+            <button className="btn btn-secondary" disabled={tracesResource.loading || tracesOffset === 0} onClick={() => setTracesOffset(value => Math.max(0, value - pageSize))} type="button">Previous</button>
+            <button className="btn btn-secondary" disabled={tracesResource.loading || tracesOffset + pageSize >= tracesTotal} onClick={() => setTracesOffset(value => value + pageSize)} type="button">Next</button>
+          </div>
+          {!traces.length ? !tracesResource.error && <p className="meta">{tracesResource.loading ? "Loading traces..." : tracesResource.data && job.status === "completed" ? "No traces match this filter or page." : emptyEvidence}</p> :
+            <div className="grid evidence-list">{traces.map(trace => <Evidence key={trace.trace_id} trace={trace} />)}</div>}
+        </section>
 
-          <section className="panel">
-            <h2>Oracle Traces ({tracesTotal})</h2>
-            <div className="btn-row" style={{ marginBottom: "0.6rem" }}>
-              <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
-                Filter case
-                <input
-                  className="input"
-                  placeholder="test_case_id"
-                  value={traceCaseInput}
-                  onChange={(event) => setTraceCaseInput(event.target.value)}
-                />
-              </label>
-              <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
-                <input
-                  type="checkbox"
-                  checked={onlyFailedTraces}
-                  onChange={(event) => {
-                    setOnlyFailedTraces(event.target.checked);
-                    setTracesOffset(0);
-                  }}
-                />
-                failed only
-              </label>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  setTraceCaseFilter(traceCaseInput.trim());
-                  setTracesOffset(0);
-                }}
-                type="button"
-              >
-                Apply Filter
-              </button>
-              <button
-                className="btn btn-secondary"
-                onClick={() => {
-                  setTraceCaseInput("");
-                  setTraceCaseFilter("");
-                  setTracesOffset(0);
-                }}
-                type="button"
-              >
-                Clear Filter
-              </button>
-            </div>
-            {traceCaseFilter && <p className="meta">Active filter: <code>{traceCaseFilter}</code></p>}
-            <p className="meta">
-              Showing {tracesTotal === 0 ? 0 : tracesOffset + 1}-{tracesOffset + traces.length} of {tracesTotal}
-            </p>
-            <div className="btn-row" style={{ marginBottom: "0.6rem" }}>
-              <button
-                className="btn btn-secondary"
-                disabled={loading || tracesOffset === 0}
-                onClick={() => setTracesOffset((prev) => Math.max(0, prev - tracesPageSize))}
-                type="button"
-              >
-                Previous
-              </button>
-              <button
-                className="btn btn-secondary"
-                disabled={loading || tracesOffset + traces.length >= tracesTotal}
-                onClick={() => setTracesOffset((prev) => prev + tracesPageSize)}
-                type="button"
-              >
-                Next
-              </button>
-            </div>
-            {traces.length === 0 ? (
-              <p className="meta">No traces available yet.</p>
-            ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Trace</th>
-                      <th>Prompt</th>
-                      <th>Output</th>
-                      <th>Error</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {traces.map((trace) => (
-                      <tr key={trace.trace_id}>
-                        <td>
-                          <code>{trace.trace_id}</code>
-                        </td>
-                        <td>{trace.prompt || "n/a"}</td>
-                        <td>{trace.raw_output || "n/a"}</td>
-                        <td>{trace.error_type || "n/a"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-
-          <section className="panel">
-            <h2>Simple Report Export</h2>
-            {report?.markdown_report ? (
-              <>
-                <div className="btn-row" style={{ marginBottom: "0.8rem" }}>
-                  <button className="btn btn-primary" onClick={() => void copyReport()} type="button">
-                    {copied ? "Copied" : "Copy Markdown Report"}
-                  </button>
-                  <button className="btn btn-secondary" onClick={downloadReport} type="button">
-                    Download .md
-                  </button>
-                  <button className="btn btn-secondary" onClick={() => void downloadClientJsonReport()} type="button">
-                    Download Client .json
-                  </button>
-                  <button className="btn btn-secondary" onClick={() => void downloadFailedCasesCsv()} type="button">
-                    Download Failed .csv
-                  </button>
-                </div>
-                <pre>{report.markdown_report}</pre>
-              </>
-            ) : (
-              <p className="meta">Report will be available after job completion.</p>
-            )}
-          </section>
-        </div>
-      )}
+        <section className="panel">
+          <h2>Simple Report Export</h2>
+          <PanelError label="Markdown report" error={reportResource.error} />
+          {exportError && <p className="error" role="alert">{exportError}</p>}
+          {copied && <p className="success" role="status">Markdown copied.</p>}
+          <div className="btn-row">
+            <button className="btn btn-primary" disabled={exporting || !report?.markdown_report} onClick={() => void exportFile(async () => {
+              if (!report) return;
+              await navigator.clipboard.writeText(report.markdown_report);
+              if (mounted.current) setCopied(true);
+            })} type="button">Copy Markdown Report</button>
+            <button className="btn btn-secondary" disabled={exporting || !report?.markdown_report} onClick={() => void exportFile(async () => {
+              if (report) saveDownload(new Blob([report.markdown_report], { type: "text/markdown;charset=utf-8" }), `evaluation-report-${jobId}.md`);
+            })} type="button">Download .md</button>
+            <button className="btn btn-secondary" disabled={exporting || !reviewKey} onClick={() => void exportFile(async () => {
+              const payload = await getJobClientReport(jobId, 25);
+              if (mounted.current) saveDownload(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" }), `evaluation-client-report-${jobId}.json`);
+            })} type="button">Download Client .json (sample)</button>
+            <button className="btn btn-secondary" disabled={exporting || !reviewKey} onClick={() => void exportFile(async () => {
+              const blob = await getJobFailedCasesCsv(jobId);
+              if (mounted.current) saveDownload(blob, `evaluation-failed-cases-${jobId}.csv`);
+            })} type="button">Download All Failed Attempts .csv</button>
+          </div>
+          <p className="meta">CSV is the complete backend export. JSON includes a labeled sample of up to 25 failed attempts and the total count. Running evaluations can only export evidence recorded so far.</p>
+          {exporting && <p className="meta" role="status">Preparing export...</p>}
+          {report?.markdown_report ? <pre>{report.markdown_report}</pre> : !reportResource.error && <p className="meta">{reportResource.loading ? "Loading report..." : emptyEvidence}</p>}
+        </section>
+      </div>}
     </main>
   );
 }

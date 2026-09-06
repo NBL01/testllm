@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getQueueStats, listJobs, processQueue } from "@/lib/api";
-import type { EvaluationJob, QueueStatsResult } from "@/lib/types";
+import { useRemoteResource } from "@/lib/useRemoteResource";
 
 function statusClass(status: string): string {
   if (status === "running") return "pill status-running";
@@ -14,82 +14,48 @@ function statusClass(status: string): string {
 }
 
 export default function JobsPage() {
-  const [jobs, setJobs] = useState<EvaluationJob[]>([]);
-  const [queueStats, setQueueStats] = useState<QueueStatsResult | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [searchInput, setSearchInput] = useState("");
   const [searchFilter, setSearchFilter] = useState("");
   const [sortBy, setSortBy] = useState<"created_at" | "updated_at">("created_at");
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
-  const [totalJobs, setTotalJobs] = useState(0);
   const [jobsOffset, setJobsOffset] = useState(0);
   const [error, setError] = useState<string>("");
-  const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const processLock = useRef(false);
+  const mounted = useRef(true);
+  const [refresh, setRefresh] = useState(0);
   const jobsPageSize = 25;
-
-  async function load() {
-    setLoading(true);
-    setError("");
-    try {
-      const [response, stats] = await Promise.all([
-        listJobs({
-          status: statusFilter,
-          limit: jobsPageSize,
-          offset: jobsOffset,
-          sortBy,
-          sortOrder,
-          searchQuery: searchFilter
-        }),
-        getQueueStats()
-      ]);
-      setJobs(response.items);
-      setTotalJobs(response.total);
-      setQueueStats(stats);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load jobs.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const stats = useRemoteResource("queue-stats", getQueueStats, refresh, 3000);
+  const queueStats = stats.data;
+  const shouldPoll = processing || !!queueStats?.by_status.queued || !!queueStats?.by_status.running;
+  const result = useRemoteResource(JSON.stringify([statusFilter, jobsOffset, sortBy, sortOrder, searchFilter]),
+    () => listJobs({ status: statusFilter, limit: jobsPageSize, offset: jobsOffset, sortBy, sortOrder, searchQuery: searchFilter }),
+    refresh, shouldPoll ? 3000 : 0);
+  const jobs = result.data?.items || [];
+  const totalJobs = result.data?.total || 0;
+  const loading = result.loading;
+  function load() { setRefresh(value => value + 1); }
 
   async function handleProcessQueue() {
+    if (processLock.current) return;
+    processLock.current = true;
     setProcessing(true);
     setError("");
     try {
       await processQueue(10);
-      await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to process queue.");
+      if (mounted.current) setError(err instanceof Error ? err.message : "Failed to process queue.");
     } finally {
-      setProcessing(false);
+      processLock.current = false;
+      if (mounted.current) { setProcessing(false); load(); }
     }
   }
 
   useEffect(() => {
-    void load();
-  }, [statusFilter, jobsOffset, sortBy, sortOrder, searchFilter]);
-
-  useEffect(() => {
-    setJobsOffset(0);
-  }, [statusFilter]);
-
-  useEffect(() => {
-    setJobsOffset(0);
-  }, [sortBy, sortOrder]);
-
-  useEffect(() => {
-    setJobsOffset(0);
-  }, [searchFilter]);
-
-  useEffect(() => {
-    if (!queueStats) return;
-    if (queueStats.by_status.queued <= 0 && queueStats.by_status.running <= 0) return;
-    const timer = window.setInterval(() => {
-      void load();
-    }, 3000);
-    return () => window.clearInterval(timer);
-  }, [queueStats?.by_status.queued, queueStats?.by_status.running, statusFilter, jobsOffset, sortBy, sortOrder, searchFilter]);
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const canPrevious = jobsOffset > 0;
   const canNext = jobsOffset + jobs.length < totalJobs;
@@ -108,7 +74,7 @@ export default function JobsPage() {
             Refresh
           </button>
           <button className="btn btn-primary" onClick={() => void handleProcessQueue()} disabled={processing} type="button">
-            {processing ? "Processing Queue..." : "Process Queue"}
+            {processing ? "Processing Global Queue..." : "Process Global Queue (up to 10)"}
           </button>
           <Link className="btn btn-primary" href="/jobs/new">
             New Job
@@ -129,7 +95,7 @@ export default function JobsPage() {
           </label>
           <button
             className="btn btn-secondary"
-            onClick={() => setSearchFilter(searchInput.trim())}
+            onClick={() => { setSearchFilter(searchInput.trim()); setJobsOffset(0); }}
             type="button"
           >
             Apply Search
@@ -139,6 +105,7 @@ export default function JobsPage() {
             onClick={() => {
               setSearchInput("");
               setSearchFilter("");
+              setJobsOffset(0);
             }}
             type="button"
           >
@@ -146,7 +113,7 @@ export default function JobsPage() {
           </button>
           <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
             Status filter
-            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); setJobsOffset(0); }}>
               <option value="all">all</option>
               <option value="draft">draft</option>
               <option value="queued">queued</option>
@@ -158,14 +125,14 @@ export default function JobsPage() {
           </label>
           <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
             Sort by
-            <select value={sortBy} onChange={(event) => setSortBy(event.target.value as "created_at" | "updated_at")}>
+            <select value={sortBy} onChange={(event) => { setSortBy(event.target.value as "created_at" | "updated_at"); setJobsOffset(0); }}>
               <option value="created_at">created_at</option>
               <option value="updated_at">updated_at</option>
             </select>
           </label>
           <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
             Order
-            <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as "desc" | "asc")}>
+            <select value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as "desc" | "asc"); setJobsOffset(0); }}>
               <option value="desc">desc</option>
               <option value="asc">asc</option>
             </select>
@@ -203,10 +170,12 @@ export default function JobsPage() {
           </p>
         )}
         {loading && <p className="meta">Loading jobs...</p>}
-        {error && <p className="error">{error}</p>}
-        {!loading && !error && jobs.length === 0 && <p className="meta">No jobs found yet.</p>}
-        {!loading && !error && jobs.length > 0 && (
-          <div className="table-wrap">
+        {error && <p className="error" role="alert">{error}</p>}
+        {result.error && <p className="error" role="alert">Jobs: {result.error}</p>}
+        {stats.error && <p className="error" role="alert">Queue statistics: {stats.error}</p>}
+        {!loading && !result.error && jobs.length === 0 && <p className="meta">No jobs match this page or filter.</p>}
+        {jobs.length > 0 && (
+          <div className="table-wrap" tabIndex={0} role="region" aria-label="Evaluation jobs">
             <table>
               <thead>
                 <tr>

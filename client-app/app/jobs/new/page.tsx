@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createJob, getHealth, getJobOptions, getModels } from "@/lib/api";
 import { API_BASE_URL, ApiClientError } from "@/lib/apiClient";
 import type { JobOptionsResponse, ModelsResponse } from "@/lib/types";
+import { validateJobNumbers } from "@/lib/jobForm";
 
 type Provider = "mock" | "ollama" | "local";
 type EvaluationMode = "regression" | "exploratory" | "adversarial" | "trace_replay";
@@ -29,7 +29,6 @@ type JobFormState = {
   project_name: string;
 };
 
-type DatasetPresetKey = "sample_test_cases.jsonl" | "regression_v1" | "adversarial_v1";
 type StatusFlag = "checking" | "ok" | "down" | "not_checked";
 
 type StatusPanelState = {
@@ -46,34 +45,8 @@ type UiError = {
   suggestedCommand?: string;
 };
 
-const MOCK_MODELS = ["mock-baseline", "mock-noisy", "mock-failing"];
-const RECOMMENDED_OLLAMA_MODELS = ["llama3.2:1b", "qwen2.5:0.5b", "qwen2.5:1.5b", "gemma2:2b"];
-
-const DATASET_PRESETS: Record<
-  DatasetPresetKey,
-  { label: string; inputPath: string; datasetVersion: string; evaluationMode?: EvaluationMode }
-> = {
-  "sample_test_cases.jsonl": {
-    label: "sample_test_cases.jsonl",
-    inputPath: "sample_test_cases.jsonl",
-    datasetVersion: ""
-  },
-  regression_v1: {
-    label: "regression_v1",
-    inputPath: "sample_test_cases.jsonl",
-    datasetVersion: "regression_v1",
-    evaluationMode: "regression"
-  },
-  adversarial_v1: {
-    label: "adversarial_v1",
-    inputPath: "sample_adversarial_test_cases.jsonl",
-    datasetVersion: "adversarial_v1",
-    evaluationMode: "adversarial"
-  }
-};
-
 const defaultState: JobFormState = {
-  input_path: "sample_test_cases.jsonl",
+  input_path: "",
   provider: "mock",
   model_name: "mock-baseline",
   dataset_version: "",
@@ -115,9 +88,9 @@ function toUiError(error: unknown): UiError {
     if (error.kind === "backend_unreachable") {
       return {
         title: "Backend API unreachable",
-        likelyCause: `FastAPI is offline or '${API_BASE_URL}' is incorrect.`,
+        likelyCause: `FastAPI is offline, '${API_BASE_URL}' is incorrect, or browser CORS/mixed-content settings block the request.`,
         technicalDetail: `${error.detail} (request path: ${error.path})`,
-        suggestedCommand: "uvicorn app.api.main:app --reload"
+        suggestedCommand: ".venv/bin/python -m uvicorn llm_reliability_analytics.main:app --app-dir src --reload"
       };
     }
     if (error.kind === "endpoint_not_found") {
@@ -148,10 +121,11 @@ function toUiError(error: unknown): UiError {
 }
 
 export default function NewJobPage() {
-  const router = useRouter();
   const [state, setState] = useState<JobFormState>(defaultState);
-  const [datasetPreset, setDatasetPreset] = useState<DatasetPresetKey>("sample_test_cases.jsonl");
-  const [advancedDatasetPath, setAdvancedDatasetPath] = useState("");
+  const [datasetPreset, setDatasetPreset] = useState("");
+  const [datasetSource, setDatasetSource] = useState<"preset" | "custom">("preset");
+  const [discoveryAttempt, setDiscoveryAttempt] = useState(0);
+  const submitLock = useRef(false);
   const [options, setOptions] = useState<JobOptionsResponse | null>(null);
   const [modelsSnapshot, setModelsSnapshot] = useState<ModelsResponse | null>(null);
   const [statusPanel, setStatusPanel] = useState<StatusPanelState>(defaultStatus);
@@ -159,14 +133,18 @@ export default function NewJobPage() {
   const [loadingOptions, setLoadingOptions] = useState(true);
   const [apiError, setApiError] = useState<UiError | null>(null);
   const [successJobId, setSuccessJobId] = useState<string>("");
+  const selectedDataset = options?.datasets.find(dataset => dataset.id === datasetPreset);
+  const effectiveDataset = datasetSource === "preset" ? selectedDataset : {
+    input_path: state.input_path.trim(), dataset_version: state.dataset_version.trim() || null,
+    evaluation_mode: state.evaluation_mode
+  };
 
   const modelChoices = useMemo(() => {
     const providerOptions = options?.models_by_provider[state.provider] || [];
     if (state.provider === "mock") {
-      return dedupe([...MOCK_MODELS, ...providerOptions]);
+      return dedupe(providerOptions);
     }
     return dedupe([
-      ...RECOMMENDED_OLLAMA_MODELS,
       ...(modelsSnapshot?.available_models || []),
       ...providerOptions
     ]);
@@ -180,50 +158,58 @@ export default function NewJobPage() {
     return !modelsSnapshot.installed_models.includes(state.model_name.trim());
   }, [state.provider, state.model_name, statusPanel.modelsEndpointAvailable, modelsSnapshot]);
 
-  const validationErrors = useMemo(() => {
-    const errors: string[] = [];
+  const validationErrors = (() => {
+    const errors = validateJobNumbers(state);
     if (!state.provider.trim()) errors.push("Provider is required.");
     if (!state.model_name.trim()) errors.push("Model name is required.");
-    if (!state.input_path.trim()) errors.push("Dataset is required.");
-    if (state.repeat_count < 1) errors.push("Repeat count must be at least 1.");
-    if (state.temperature < 0) errors.push("Temperature must be at least 0.");
-    if (state.max_output_tokens < 1) errors.push("Max output tokens must be at least 1.");
-    if (state.timeout_seconds < 5) errors.push("Timeout seconds must be at least 5.");
-    if (state.limit < 0) errors.push("Test-case limit cannot be negative.");
+    if (!effectiveDataset?.input_path.trim()) errors.push("Select a backend dataset or enter an explicit custom dataset path.");
+    if (effectiveDataset?.input_path && !/\.(jsonl|csv)$/i.test(effectiveDataset.input_path)) errors.push("Dataset path must name a JSONL or CSV file on the backend.");
+    if (options && !options.providers.includes(state.provider)) errors.push("Select a supported provider.");
+    if (!modelChoices.includes(state.model_name)) errors.push("Select a model from the backend catalog.");
     return errors;
-  }, [state]);
+  })();
 
   const formInvalid = validationErrors.length > 0;
 
   useEffect(() => {
+    let active = true;
     async function loadOptions() {
       setLoadingOptions(true);
+      setApiError(null);
       try {
         const loaded = await getJobOptions();
+        if (!active) return;
         setOptions(loaded);
+        setDatasetPreset(previous => previous || loaded.datasets[0]?.id || "");
       } catch (error) {
-        setApiError(toUiError(error));
+        if (active) setApiError(toUiError(error));
       } finally {
-        setLoadingOptions(false);
+        if (active) setLoadingOptions(false);
       }
     }
     void loadOptions();
-  }, []);
+    return () => { active = false; };
+  }, [discoveryAttempt]);
 
   useEffect(() => {
+    let active = true;
+    setStatusPanel(defaultStatus);
     async function loadStatus() {
       try {
         const health = await getHealth();
+        if (!active) return;
         setStatusPanel((prev) => ({
           ...prev,
           backend: health.status === "ok" ? "ok" : "down"
         }));
       } catch {
+        if (!active) return;
         setStatusPanel((prev) => ({ ...prev, backend: "down" }));
       }
 
       try {
         const models = await getModels();
+        if (!active) return;
         setModelsSnapshot(models);
         setStatusPanel((prev) => ({
           ...prev,
@@ -232,7 +218,9 @@ export default function NewJobPage() {
           installedModelCount: models.installed_models.length
         }));
       } catch (error) {
-        if (error instanceof ApiClientError && error.kind === "endpoint_not_found") {
+        if (!active) return;
+        setModelsSnapshot(null);
+        if (error instanceof ApiClientError && error.status === 404) {
           setStatusPanel((prev) => ({
             ...prev,
             modelsEndpointAvailable: false,
@@ -250,7 +238,8 @@ export default function NewJobPage() {
       }
     }
     void loadStatus();
-  }, []);
+    return () => { active = false; };
+  }, [discoveryAttempt]);
 
   useEffect(() => {
     setState((prev) => {
@@ -261,20 +250,19 @@ export default function NewJobPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.provider, modelChoices.join("|")]);
 
-  function applyDatasetPreset(nextPreset: DatasetPresetKey) {
+  function applyDatasetPreset(nextPreset: string) {
     setDatasetPreset(nextPreset);
-    const preset = DATASET_PRESETS[nextPreset];
+    setDatasetSource("preset");
     setState((prev) => ({
       ...prev,
-      input_path: preset.inputPath,
-      dataset_version: preset.datasetVersion || prev.dataset_version,
-      evaluation_mode: preset.evaluationMode || prev.evaluation_mode
+      input_path: "", dataset_version: "", evaluation_mode: "regression"
     }));
   }
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (formInvalid || submitting) return;
+    if (formInvalid || submitLock.current || !options || loadingOptions || !effectiveDataset) return;
+    submitLock.current = true;
     setSubmitting(true);
     setApiError(null);
     setSuccessJobId("");
@@ -282,16 +270,17 @@ export default function NewJobPage() {
     try {
       const payload = {
         ...state,
-        input_path: advancedDatasetPath.trim() || state.input_path,
-        dataset_version: state.dataset_version.trim() || null,
+        input_path: effectiveDataset.input_path,
+        dataset_version: effectiveDataset.dataset_version,
+        evaluation_mode: effectiveDataset.evaluation_mode,
+        model_name: state.model_name.trim(),
+        oracle_profile: "default",
         limit: state.limit > 0 ? state.limit : null
       };
       const job = await createJob(payload);
       setSuccessJobId(job.job_id);
-      setTimeout(() => {
-        router.push(`/jobs/${job.job_id}`);
-      }, 1000);
     } catch (error) {
+      submitLock.current = false;
       setApiError(toUiError(error));
     } finally {
       setSubmitting(false);
@@ -312,6 +301,13 @@ export default function NewJobPage() {
 
       <section className="panel grid" style={{ marginBottom: "1rem" }}>
         <h2 style={{ margin: 0 }}>System Status</h2>
+        <div className="btn-row">
+          <button className="btn btn-secondary" type="button" disabled={loadingOptions || submitting || !!successJobId}
+            onClick={() => setDiscoveryAttempt(value => value + 1)}>Recheck Status and Options</button>
+        </div>
+        <p className="meta">API: <code>{API_BASE_URL}</code>. Configure <code>NEXT_PUBLIC_API_BASE_URL</code> in
+          <code> client-app/.env.local</code>, then restart Next.js. If unavailable, run from the repository root:
+          <code> .venv/bin/python -m uvicorn llm_reliability_analytics.main:app --app-dir src --reload</code>.</p>
         <div className="form-grid">
           <div>
             <strong>Backend API</strong>
@@ -341,7 +337,7 @@ export default function NewJobPage() {
 
       <form className="panel grid" onSubmit={onSubmit}>
         {loadingOptions && <p className="meta">Loading provider/model/dataset options...</p>}
-
+        <fieldset className="grid form-fields" disabled={submitting || !!successJobId}>
         <section className="grid">
           <h2 style={{ margin: 0 }}>Evaluation Target</h2>
           <div className="form-grid">
@@ -377,7 +373,8 @@ export default function NewJobPage() {
             <label>
               Evaluation mode
               <select
-                value={state.evaluation_mode}
+                value={effectiveDataset?.evaluation_mode || state.evaluation_mode}
+                disabled={datasetSource === "preset"}
                 onChange={(event) =>
                   setState((prev) => ({
                     ...prev,
@@ -406,20 +403,31 @@ export default function NewJobPage() {
           <h2 style={{ margin: 0 }}>Dataset and Oracle</h2>
           <div className="form-grid">
             <label>
-              Dataset
-              <select value={datasetPreset} onChange={(event) => applyDatasetPreset(event.target.value as DatasetPresetKey)}>
-                {Object.entries(DATASET_PRESETS).map(([key, preset]) => (
-                  <option key={key} value={key}>
-                    {preset.label}
+              Dataset source
+              <select value={datasetSource} onChange={event => {
+                setDatasetSource(event.target.value as "preset" | "custom");
+                setState(prev => ({ ...prev, input_path: "", dataset_version: "", evaluation_mode: "regression" }));
+              }}>
+                <option value="preset">Backend preset</option>
+                <option value="custom">Custom backend file</option>
+              </select>
+            </label>
+            {datasetSource === "preset" && <label>
+              Dataset preset
+              <select value={datasetPreset} onChange={(event) => applyDatasetPreset(event.target.value)}>
+                <option value="" disabled>Select a dataset</option>
+                {(options?.datasets || []).map(dataset => (
+                  <option key={dataset.id} value={dataset.id}>
+                    {dataset.label}
                   </option>
                 ))}
               </select>
-            </label>
+            </label>}
             <label>
               Oracle profile
               <select
-                value={state.oracle_profile}
-                onChange={(event) => setState((prev) => ({ ...prev, oracle_profile: event.target.value }))}
+                value="default"
+                disabled
               >
                 {(options?.oracle_profiles || ["default"]).map((profile) => (
                   <option key={profile} value={profile}>
@@ -432,25 +440,27 @@ export default function NewJobPage() {
               Dataset version (optional)
               <input
                 className="input"
-                value={state.dataset_version}
+                value={effectiveDataset?.dataset_version || ""}
+                disabled={datasetSource === "preset"}
                 onChange={(event) => setState((prev) => ({ ...prev, dataset_version: event.target.value }))}
               />
             </label>
           </div>
-          <details>
-            <summary className="meta" style={{ cursor: "pointer" }}>
-              Advanced dataset path
-            </summary>
+          <p className="meta">Default is metadata only: scoring uses each dataset case&apos;s oracle type and configuration.</p>
+          {datasetSource === "custom" && (
             <label style={{ marginTop: "0.6rem" }}>
               Custom dataset path
               <input
                 className="input"
-                placeholder="sample_test_cases.jsonl"
-                value={advancedDatasetPath}
-                onChange={(event) => setAdvancedDatasetPath(event.target.value)}
+                placeholder="data/raw/my_test_cases.jsonl"
+                value={state.input_path}
+                onChange={(event) => setState(prev => ({ ...prev, input_path: event.target.value }))}
               />
             </label>
-          </details>
+          )}
+          <p className="meta" aria-live="polite">Effective dataset: <code>{effectiveDataset?.input_path || "not selected"}</code>
+            {" | "}version: {effectiveDataset?.dataset_version || "dataset-defined"}{" | "}mode: {effectiveDataset?.evaluation_mode || "not selected"}.
+            Custom paths refer to supported files on the backend, not browser uploads.</p>
         </section>
 
         <section className="grid">
@@ -462,8 +472,9 @@ export default function NewJobPage() {
                 className="input"
                 type="number"
                 min={1}
-                value={state.repeat_count}
-                onChange={(event) => setState((prev) => ({ ...prev, repeat_count: Number(event.target.value) }))}
+                step={1}
+                value={Number.isFinite(state.repeat_count) ? state.repeat_count : ""}
+                onChange={(event) => setState((prev) => ({ ...prev, repeat_count: event.target.valueAsNumber }))}
               />
             </label>
             <label>
@@ -472,9 +483,9 @@ export default function NewJobPage() {
                 className="input"
                 type="number"
                 min={0}
-                step={0.1}
-                value={state.temperature}
-                onChange={(event) => setState((prev) => ({ ...prev, temperature: Number(event.target.value) }))}
+                step="any"
+                value={Number.isFinite(state.temperature) ? state.temperature : ""}
+                onChange={(event) => setState((prev) => ({ ...prev, temperature: event.target.valueAsNumber }))}
               />
             </label>
             <label>
@@ -483,8 +494,10 @@ export default function NewJobPage() {
                 className="input"
                 type="number"
                 min={1}
-                value={state.max_output_tokens}
-                onChange={(event) => setState((prev) => ({ ...prev, max_output_tokens: Number(event.target.value) }))}
+                max={1024}
+                step={1}
+                value={Number.isFinite(state.max_output_tokens) ? state.max_output_tokens : ""}
+                onChange={(event) => setState((prev) => ({ ...prev, max_output_tokens: event.target.valueAsNumber }))}
               />
             </label>
             <label>
@@ -493,8 +506,10 @@ export default function NewJobPage() {
                 className="input"
                 type="number"
                 min={5}
-                value={state.timeout_seconds}
-                onChange={(event) => setState((prev) => ({ ...prev, timeout_seconds: Number(event.target.value) }))}
+                max={300}
+                step="any"
+                value={Number.isFinite(state.timeout_seconds) ? state.timeout_seconds : ""}
+                onChange={(event) => setState((prev) => ({ ...prev, timeout_seconds: event.target.valueAsNumber }))}
               />
             </label>
             <label>
@@ -503,8 +518,9 @@ export default function NewJobPage() {
                 className="input"
                 type="number"
                 min={0}
-                value={state.limit}
-                onChange={(event) => setState((prev) => ({ ...prev, limit: Number(event.target.value) }))}
+                step={1}
+                value={Number.isFinite(state.limit) ? state.limit : ""}
+                onChange={(event) => setState((prev) => ({ ...prev, limit: event.target.valueAsNumber }))}
               />
             </label>
           </div>
@@ -556,9 +572,10 @@ export default function NewJobPage() {
             onChange={(event) => setState((prev) => ({ ...prev, notes: event.target.value }))}
           />
         </label>
+        </fieldset>
 
         {validationErrors.length > 0 && (
-          <div className="panel" style={{ borderColor: "#f0c3c3" }}>
+          <div className="panel" aria-live="polite" style={{ borderColor: "#f0c3c3" }}>
             <strong>Form validation</strong>
             {validationErrors.map((item) => (
               <p className="error" key={item} style={{ margin: "0.35rem 0 0" }}>
@@ -569,7 +586,7 @@ export default function NewJobPage() {
         )}
 
         {apiError && (
-          <div className="panel" style={{ borderColor: "#f0c3c3", background: "#fff7f7" }}>
+          <div className="panel" role="alert" style={{ borderColor: "#f0c3c3", background: "#fff7f7" }}>
             <strong className="error">{apiError.title}</strong>
             <p className="meta" style={{ margin: "0.35rem 0 0" }}>
               Likely cause: {apiError.likelyCause}
@@ -586,7 +603,7 @@ export default function NewJobPage() {
         )}
 
         {successJobId && (
-          <div className="panel" style={{ borderColor: "#b5e6ce", background: "#f4fff8" }}>
+          <div className="panel" role="status" style={{ borderColor: "#b5e6ce", background: "#f4fff8" }}>
             <strong className="success">Draft evaluation job created.</strong>
             <p className="meta" style={{ margin: "0.35rem 0 0" }}>
               job_id: <code>{successJobId}</code>
@@ -600,12 +617,11 @@ export default function NewJobPage() {
         )}
 
         <div className="btn-row">
-          <button className="btn btn-primary" disabled={submitting || formInvalid} type="submit">
-            {submitting ? "Creating..." : "Create Draft Job"}
+          <button className="btn btn-primary" disabled={submitting || !!successJobId || formInvalid || loadingOptions || !options} type="submit">
+            {successJobId ? "Draft Created" : submitting ? "Creating..." : "Create Draft Job"}
           </button>
         </div>
       </form>
     </main>
   );
 }
-

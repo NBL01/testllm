@@ -43,7 +43,8 @@ from frontend.components.tables import (  # noqa: E402
     render_raw_results_table,
 )
 from frontend.services.data_provider import DataProvider  # noqa: E402
-from frontend.services.metrics_adapter import MetricsAdapter  # noqa: E402
+from frontend.services.api_client import APIClient, BackendAPIError  # noqa: E402
+from frontend.services.metrics_adapter import IncompatibleRunsError, MetricsAdapter  # noqa: E402
 from frontend.services.result_inspector import fetch_result_trace, fetch_results_by_category  # noqa: E402
 from frontend.services.run_launcher import LaunchRequest, RunLauncher  # noqa: E402
 from frontend.services.trace_service import mark_trace_candidate  # noqa: E402
@@ -62,11 +63,11 @@ from llm_reliability_analytics.test_authoring.models import CandidateStatus  # n
 st.set_page_config(page_title="LLM Reliability Admin Console", layout="wide")
 
 
-@st.cache_data(show_spinner=False)
-def load_dashboard_data(_db_signature: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str, str, str]:
-    provider = DataProvider(project_root=PROJECT_ROOT)
+@st.cache_data(show_spinner=False, ttl=5)
+def load_dashboard_data(api_base_url: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, str, str, str]:
+    provider = DataProvider(api=APIClient(api_base_url))
     data = provider.load()
-    return data.runs, data.cases, data.results, data.source, data.note, str(provider.db_path)
+    return data.runs, data.cases, data.results, data.source, data.note, provider.api.base_url
 
 
 @st.cache_resource(show_spinner=False)
@@ -86,8 +87,10 @@ def main() -> None:
     )
 
     launcher = get_run_launcher()
-    db_signature = _db_signature(DataProvider(project_root=PROJECT_ROOT).db_path)
-    runs_df, cases_df, results_df, source, note, db_path = load_dashboard_data(db_signature)
+    api_base_url = APIClient().base_url
+    # Probe even on a cache hit so an outage never masquerades as empty/live data.
+    APIClient(api_base_url).request("GET", "/health", timeout=5.0)
+    runs_df, cases_df, results_df, source, note, api_base_url = load_dashboard_data(api_base_url)
     adapter = MetricsAdapter()
 
     st.sidebar.header("Internal Workspace")
@@ -107,7 +110,8 @@ def main() -> None:
 
     with st.sidebar.expander("Data source details"):
         st.write(f"Source: **{source}**")
-        st.write(f"DuckDB path: `{db_path}`")
+        st.write(f"FastAPI: `{api_base_url}`")
+        st.caption("Snapshots cached for up to 5 seconds; Refresh data forces a new snapshot.")
         if note:
             st.write(note)
 
@@ -164,12 +168,16 @@ def main() -> None:
         )
 
     previous_run_id = adapter.latest_previous_run_id(runs_df=runs_df, run_id=selected_run_id)
+    previous_issues = adapter.comparison_issues(runs_df, results_df, [selected_run_id, previous_run_id]) if previous_run_id else []
     previous_report = (
         adapter.build_report_for_run(results_df=results_df, run_id=previous_run_id, runs_df=runs_df)
-        if previous_run_id is not None
+        if previous_run_id is not None and not previous_issues
         else None
     )
     improvement_status = adapter.improvement_status_vs_previous(current_report=report, previous_report=previous_report)
+    if previous_issues:
+        improvement_status = "not_comparable"
+        st.warning("Previous-run improvement is unavailable: " + ", ".join(previous_issues))
     insights = adapter.build_insights(report=report, improvement_status=improvement_status, run_rows=run_rows)
 
     # Presentation-critical section: clear top-level run context before metrics/charts.
@@ -290,6 +298,7 @@ def main() -> None:
 
     # 5) Run Comparison
     with tabs[4]:
+        _comparison_disclosure()
         if len(ordered_run_ids) < 2:
             st.info("At least two runs are required for run comparison.")
         else:
@@ -315,46 +324,50 @@ def main() -> None:
             if baseline_run_id == candidate_run_id:
                 st.warning("Select two different runs for comparison.")
             else:
-                bundle = adapter.compare_runs(
-                    results_df=results_df,
-                    runs_df=runs_df,
-                    baseline_run_id=baseline_run_id,
-                    candidate_run_id=candidate_run_id,
-                )
+                issues = adapter.comparison_issues(runs_df, results_df, [baseline_run_id, candidate_run_id])
+                if issues:
+                    st.warning("Incompatible runs: " + ", ".join(issues))
+                else:
+                    bundle = adapter.compare_runs(
+                        results_df=results_df,
+                        runs_df=runs_df,
+                        baseline_run_id=baseline_run_id,
+                        candidate_run_id=candidate_run_id,
+                    )
 
-                render_run_comparison_summary(bundle)
+                    render_run_comparison_summary(bundle)
 
-                metric_rows = [
-                    {
-                        "metric": "accuracy",
-                        "baseline": bundle.baseline_report.accuracy,
-                        "candidate": bundle.candidate_report.accuracy,
-                        "delta": bundle.candidate_report.accuracy - bundle.baseline_report.accuracy,
-                    },
-                    {
-                        "metric": "reliability_score",
-                        "baseline": bundle.baseline_report.overall_reliability_score,
-                        "candidate": bundle.candidate_report.overall_reliability_score,
-                        "delta": (
-                            bundle.candidate_report.overall_reliability_score
-                            - bundle.baseline_report.overall_reliability_score
-                        ),
-                    },
-                    {
-                        "metric": "average_latency_ms",
-                        "baseline": bundle.baseline_report.average_latency_ms,
-                        "candidate": bundle.candidate_report.average_latency_ms,
-                        "delta": (
-                            bundle.candidate_report.average_latency_ms
-                            - bundle.baseline_report.average_latency_ms
-                        ),
-                    },
-                ]
-                metric_df = pd.DataFrame(metric_rows)
-                st.dataframe(metric_df, use_container_width=True, hide_index=True)
+                    metric_rows = [
+                        {
+                            "metric": "accuracy",
+                            "baseline": bundle.baseline_report.accuracy,
+                            "candidate": bundle.candidate_report.accuracy,
+                            "delta": bundle.candidate_report.accuracy - bundle.baseline_report.accuracy,
+                        },
+                        {
+                            "metric": "reliability_score",
+                            "baseline": bundle.baseline_report.overall_reliability_score,
+                            "candidate": bundle.candidate_report.overall_reliability_score,
+                            "delta": (
+                                bundle.candidate_report.overall_reliability_score
+                                - bundle.baseline_report.overall_reliability_score
+                            ),
+                        },
+                        {
+                            "metric": "average_latency_ms",
+                            "baseline": bundle.baseline_report.average_latency_ms,
+                            "candidate": bundle.candidate_report.average_latency_ms,
+                            "delta": (
+                                bundle.candidate_report.average_latency_ms
+                                - bundle.baseline_report.average_latency_ms
+                            ),
+                        },
+                    ]
+                    metric_df = pd.DataFrame(metric_rows)
+                    st.dataframe(metric_df, use_container_width=True, hide_index=True)
 
-                st.subheader("Category-wise Accuracy Delta")
-                plot_category_accuracy_delta(bundle.category_delta)
+                    st.subheader("Category-wise Accuracy Delta")
+                    plot_category_accuracy_delta(bundle.category_delta)
 
     # 6) Raw Results: transparent attempt-level drill-down.
     with tabs[5]:
@@ -668,6 +681,7 @@ def _render_model_comparison_page(
 ) -> None:
     st.subheader("Model Comparison")
     st.caption("Compare models using multi-run median aggregation (default: last 3 runs per model).")
+    _comparison_disclosure()
 
     if runs_df.empty or results_df.empty:
         st.info("No run/result data available yet.")
@@ -691,14 +705,24 @@ def _render_model_comparison_page(
     dataset_options = sorted(runs_df["dataset_version"].dropna().astype(str).unique().tolist())
     selected_dataset = st.selectbox("Dataset version filter", ["all"] + dataset_options, index=0)
 
-    model_reports = adapter.build_multi_run_model_reports(
-        results_df=results_df,
-        runs_df=runs_df,
-        runs_per_model=runs_per_model,
-        selected_models=selected_models,
-        evaluation_mode=None if selected_mode == "all" else selected_mode,
-        dataset_version=None if selected_dataset == "all" else selected_dataset,
-    )
+    if not selected_models:
+        st.info("Select at least one model.")
+        return
+    try:
+        model_reports = adapter.build_multi_run_model_reports(
+            results_df=results_df,
+            runs_df=runs_df,
+            runs_per_model=runs_per_model,
+            selected_models=selected_models,
+            evaluation_mode=None if selected_mode == "all" else selected_mode,
+            dataset_version=None if selected_dataset == "all" else selected_dataset,
+        )
+    except IncompatibleRunsError as exc:
+        st.warning(str(exc))
+        st.dataframe(runs_df[[key for key in ["run_id", "model_name", "provider", "dataset_version",
+                     "evaluation_mode", "temperature", "max_output_tokens", "repeat_count", "status"]
+                     if key in runs_df]], hide_index=True)
+        return
 
     if not model_reports:
         st.warning("No model reports available for selected filters.")
@@ -992,6 +1016,9 @@ def _render_run_launcher(launcher: RunLauncher) -> None:
     provider = "ollama" if provider_label.startswith("Ollama") else "mock"
 
     datasets = launcher.list_datasets()
+    if not datasets:
+        st.warning("No supported datasets are available on the backend. Add a dataset there, then refresh.")
+        return
     dataset_path = st.selectbox("Dataset file", datasets, index=0 if datasets else None)
 
     run_name = st.text_input("Run name", value="streamlit-run")
@@ -1008,12 +1035,7 @@ def _render_run_launcher(launcher: RunLauncher) -> None:
     temperature_default = 0.0
 
     if provider == "mock":
-        profiles = {
-            "mock-baseline": "deterministic",
-            "mock-semi-random": "semi_random",
-        }
-        model_name = st.selectbox("Mock profile", list(profiles.keys()), index=0)
-        mock_mode = profiles[model_name]
+        model_name = st.selectbox("Mock profile", launcher.mock_models(), index=0)
     else:
         recommended_models = launcher.recommended_ollama_models()
         installed_models: list[str] = []
@@ -1080,12 +1102,21 @@ def _render_run_launcher(launcher: RunLauncher) -> None:
                 st.rerun()
 
 
-def _db_signature(db_path: Path) -> str:
-    if not db_path.exists():
-        return f"{db_path}:missing"
-    stat = db_path.stat()
-    return f"{db_path}:{stat.st_mtime_ns}:{stat.st_size}"
+def _comparison_disclosure() -> None:
+    st.warning(
+        "Exploratory comparison only: matching stored settings and case evidence are required. "
+        "Legacy runs may lack dataset fingerprints, oracle configuration, seed and timeout evidence; "
+        "matching dataset labels alone do not prove equivalent configurations. "
+        "Median aggregation is a synthetic summary, not measured repeatability."
+    )
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except BackendAPIError as exc:
+        st.error(str(exc))
+        st.code(".venv/bin/python -m uvicorn llm_reliability_analytics.main:app --app-dir src --workers 1")
+        if st.button("Retry backend connection"):
+            load_dashboard_data.clear()
+            st.rerun()

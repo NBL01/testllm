@@ -13,7 +13,12 @@ import type {
   QueueStatsResult,
   TracesResponse
 } from "./types";
-import { requestJson } from "./apiClient";
+import { requestDownload, requestJson } from "./apiClient";
+import { validateJobOptions } from "./jobForm";
+
+export function getJobFailedCasesCsv(jobId: string): Promise<Blob> {
+  return requestDownload(`/evaluation-jobs/${encodeURIComponent(jobId)}/failed-cases.csv`);
+}
 
 export function listJobs(params?: {
   status?: string;
@@ -48,7 +53,7 @@ export function listJobs(params?: {
 }
 
 export function getJobOptions(): Promise<JobOptionsResponse> {
-  return requestJson<JobOptionsResponse>("/evaluation-jobs/options");
+  return requestJson<JobOptionsResponse>("/evaluation-jobs/options").then(validateJobOptions);
 }
 
 export function createJob(payload: Record<string, unknown>): Promise<EvaluationJob> {
