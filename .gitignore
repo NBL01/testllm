@@ -6,7 +6,16 @@ data/*
 !data/raw/sample_test_cases.jsonl
 !data/raw/llm_eval_dataset_v2_300.jsonl
 !data/raw/llm_eval_dataset_v2_300.parquet
+!data/adversarial/
+data/adversarial/*
+!data/adversarial/mvp_adversarial_v1.jsonl
 data/*.duckdb
 client-app/node_modules/
 client-app/.next/
 client-app/.turbo/
+
+# Local agentic-reference material (not part of the project)
+.agents/
+skills-lock.json
+MVP_REVIEW_PLAN.md
+docs/MVP_IMPLEMENTATION_REVIEW.md
