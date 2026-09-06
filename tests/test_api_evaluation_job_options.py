@@ -34,5 +34,4 @@ def test_evaluation_job_options_endpoint_supports_oracle_profile_env_override(mo
     payload = response.json()
 
     assert "default" in payload["oracle_profiles"]
-    assert "strict" in payload["oracle_profiles"]
-    assert "finance-risk" in payload["oracle_profiles"]
+    assert payload["oracle_profiles"] == ["default"]

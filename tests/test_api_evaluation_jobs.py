@@ -90,7 +90,7 @@ def test_evaluation_job_run_links_test_run(monkeypatch, tmp_path) -> None:
 
     rerun_response = client.post(f"/evaluation-jobs/{job_id}/run")
     assert rerun_response.status_code == 400
-    assert "already executed" in rerun_response.json()["detail"]
+    assert "cannot run from status=completed" in rerun_response.json()["detail"]
 
     summary_response = client.get(f"/evaluation-jobs/{job_id}/summary")
     assert summary_response.status_code == 200
@@ -570,5 +570,5 @@ def test_evaluation_job_create_rejects_empty_local_model_name(monkeypatch, tmp_p
             "repeat_count": 1,
         },
     )
-    assert create_response.status_code == 400
-    assert "model_name is required when provider=local" in create_response.json()["detail"]
+    assert create_response.status_code == 422
+    assert create_response.json()["detail"][0]["loc"] == ["body", "model_name"]

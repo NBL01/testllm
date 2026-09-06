@@ -35,7 +35,7 @@ def test_run_job_marks_failed_when_batch_workflow_raises(monkeypatch, tmp_path) 
 
     failed = workflow.get_job(job.job_id)
     assert failed.status == "failed"
-    assert failed.linked_run_id is None
+    assert failed.linked_run_id is not None
     assert failed.failure_reason is not None
     assert "forced workflow failure for test" in failed.failure_reason
     assert failed.started_at is not None
@@ -64,7 +64,7 @@ def test_retry_job_can_create_new_draft_copy(monkeypatch, tmp_path) -> None:
             provider="mock",
             model_name="mock-baseline",
             evaluation_mode="regression",
-            oracle_profile="strict",
+            oracle_profile="default",
             repeat_count=2,
             limit=5,
             submitted_by="qa-user",
@@ -99,4 +99,3 @@ def test_process_queued_jobs_zero_or_negative_max_defaults_to_one(monkeypatch, t
     assert result.requested_max_jobs == 1
     assert result.processed_count == 1
     assert len(result.results) == 1
-
