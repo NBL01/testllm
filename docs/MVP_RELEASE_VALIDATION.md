@@ -18,6 +18,9 @@ modification time and size throughout. Only mock providers were exercised.
 | Browser journeys | `npm --prefix client-app run test:e2e` (production build, isolated API/DB) | 22 passed on desktop and Pixel 7 Chromium; 0 server tracebacks or HTTP 500s |
 | UI coexistence | Isolated API; job running while Streamlit `AppTest` rendered over HTTP | 0 exceptions; status `running` during render; Streamlit never opened a DB file; both jobs completed; mock models eligible and ranked |
 | Single API owner | Second API on the same temp DB | exit 3 with the ownership error |
+| Fresh clone | `git clone` of `e7bb06d`, new venv + `npm ci`, then all gates above | 232 pytest, audit 0, 20 + 3 client, 22 browser passed; 0 tracebacks |
+| Backup and restore | Runbook steps on a stopped temp DB: offline `CHECKPOINT`, `cp -p`, restore to a new file, start API on it | no WAL left; original, backup and restore SHA-256 equal; 3 jobs, statuses, linked runs, summary metrics and failed-attempt CSV bytes identical after restore |
+| Legacy timezone | `test_legacy_timezone_requires_explicit_conversion_and_backup` (synthetic DB) | refuses without a zone; `America/New_York` 15:00 becomes 19:00 UTC; `.bak` written |
 | Startup, bash and fish | README's three Terminal commands run verbatim via `bash -c` / `fish -c`, DB path pointed at a temp file | API `/health`, client `/jobs`, Streamlit `/_stcore/health` all ready in both shells |
 
 Defects found and fixed during the run:
@@ -41,7 +44,10 @@ Defects found and fixed during the run:
 
 Runtime: Python 3.14.10, Node 26.13.1 (CI: Python 3.12, Node 22), FastAPI 0.135.0,
 Uvicorn 0.41.0, DuckDB 1.4.4, Streamlit 1.54.0, pandas 2.3.3, HTTPX 0.28.1,
-Pydantic 2.12.5, Next.js 15.5.29, Playwright 1.63.0.
+Pydantic 2.12.5, Next.js 15.5.29, Playwright 1.63.0. The fresh clone resolved newer
+in-range Python packages (FastAPI 0.165.0, Uvicorn 0.54.0, DuckDB 1.5.6, Streamlit
+1.67.0, Pydantic 2.14.4) and passed the same gates; with that Starlette, its test
+client warns that `httpx` support is deprecated in favor of `httpx2`.
 
 ## Earlier operational observations (2026-09-13)
 
@@ -89,14 +95,12 @@ a dependency advisory review or a supported-version matrix.
 
 ## Remaining release checks
 
-1. Fresh clone and dependency installation from scratch (the 2026-11-21 run reused
-   the existing virtual environment and `node_modules`).
-2. Backup/restore and restored-copy API startup, and legacy timezone conversion,
-   repeated on the final code (last rehearsed 2026-09-13, above).
-3. Manual keyboard and screen-reader smoke of the client beyond the automated
+1. Manual keyboard and screen-reader smoke of the client beyond the automated
    keyboard-order check, and a real browser (not `AppTest`) Streamlit session.
-4. Goal-by-goal G01-G17 evidence and reconciliation of remaining defects/limitations.
-5. Optional live Ollama run, kept separate from the deterministic mock gate.
+2. Goal-by-goal G01-G17 evidence and reconciliation of remaining defects/limitations.
+3. Optional live Ollama run, kept separate from the deterministic mock gate.
+4. Release decision, including whether to pin Python dependency upper bounds now
+   that a fresh install resolves newer minor versions than the recorded runtime.
 
 Use [the runbook](MVP_RUNBOOK.md) for supported local operation while release
 acceptance remains pending.

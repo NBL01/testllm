@@ -45,10 +45,9 @@ findings and B1-B7 acceptance criteria; historical finding text is not current b
 
 B7 validation is in progress. Do not infer completion from a successful mock happy
 path or from documentation updates. The 2026-11-21 run in
-[release validation](docs/MVP_RELEASE_VALIDATION.md) records evidence for items 1-4
-and the startup part of item 5; fresh-clone fixtures, backup/restore and timezone
-recovery on the final code, goal-by-goal evidence (item 6) and reconciliation
-(item 7) remain open.
+[release validation](docs/MVP_RELEASE_VALIDATION.md) records evidence for items 1-5
+and the automated part of item 6; manual accessibility checks, goal-by-goal evidence
+(item 6) and reconciliation (item 7) remain open.
 
 1. Run the full Python regression suite with an explicit temporary DB and isolated
    export paths, including claims/cancel races, failure injection, startup recovery,
