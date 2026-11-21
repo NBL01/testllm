@@ -4,7 +4,7 @@ export function validateJobNumbers(state: {
   repeat_count: number; temperature: number; max_output_tokens: number; timeout_seconds: number; limit: number;
 }): string[] {
   const errors: string[] = [];
-  if (!Number.isSafeInteger(state.repeat_count) || state.repeat_count < 1) errors.push("Repeat count must be a finite integer of at least 1.");
+  if (!Number.isSafeInteger(state.repeat_count) || state.repeat_count < 1 || state.repeat_count > 100) errors.push("Repeat count must be an integer from 1 to 100.");
   if (!Number.isFinite(state.temperature) || state.temperature < 0) errors.push("Temperature must be finite and at least 0.");
   if (!Number.isInteger(state.max_output_tokens) || state.max_output_tokens < 1 || state.max_output_tokens > 1024) errors.push("Max output tokens must be an integer from 1 to 1024.");
   if (!Number.isFinite(state.timeout_seconds) || state.timeout_seconds < 5 || state.timeout_seconds > 300) errors.push("Timeout seconds must be finite and from 5 to 300.");

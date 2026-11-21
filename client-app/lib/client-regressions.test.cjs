@@ -66,10 +66,11 @@ test('download helper receives complete server CSV, not a JSON page', async () =
 
 test('numeric validation rejects nonfinite, fractional counts and backend bounds', () => {
   const { validateJobNumbers } = require('./jobForm.ts');
+  assert.deepEqual(require("./jobForm.ts").validateJobNumbers({ repeat_count: 100, temperature: 0, max_output_tokens: 1, timeout_seconds: 5, limit: 0 }), []);
   const valid = { repeat_count: 1, temperature: 0, max_output_tokens: 1024, timeout_seconds: 300, limit: 0 };
   assert.deepEqual(validateJobNumbers(valid), []);
   for (const [field, values] of Object.entries({
-    repeat_count: [0, 1.5, NaN, Infinity], temperature: [-1, NaN, Infinity],
+    repeat_count: [0, 101, 1.5, NaN, Infinity], temperature: [-1, NaN, Infinity],
     max_output_tokens: [0, 1025, 1.5, NaN, Infinity], timeout_seconds: [4, 301, NaN, Infinity],
     limit: [-1, 1.5, NaN, Infinity]
   })) for (const value of values) assert.ok(validateJobNumbers({ ...valid, [field]: value }).length, `${field}=${value}`);

@@ -3,6 +3,7 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any
 
+from jsonschema import SchemaError as JsonSchemaDefinitionError
 from jsonschema import ValidationError as JsonSchemaValidationError
 from jsonschema import validate
 from pydantic import BaseModel, Field
@@ -453,6 +454,15 @@ class JsonSchemaOracle(BaseOracle):
 
         try:
             validate(instance=candidate_json, schema=schema)
+        except JsonSchemaDefinitionError as exc:
+            return OracleEvaluation(
+                is_correct=False,
+                score=0.0,
+                error_type="invalid_oracle_config",
+                explanation=f"The case's JSON schema is invalid: {exc.message}",
+                details={"parse_success": True, "schema_valid": None, "missing_fields": missing_fields,
+                         "extra_fields": extra_fields, "parse_error": None},
+            )
         except JsonSchemaValidationError as exc:
             return OracleEvaluation(
                 is_correct=False,

@@ -56,7 +56,7 @@ class EvaluationJobCreate(BaseModel):
     temperature: float = Field(default=0.0, ge=0)
     max_output_tokens: int = Field(default=128, ge=1, le=1024)
     timeout_seconds: float = Field(default=30.0, ge=5.0, le=300.0)
-    repeat_count: int = Field(default=1, ge=1)
+    repeat_count: int = Field(default=1, ge=1, le=100)  # each repeat multiplies every case
     limit: int | None = Field(default=None, ge=1)
     notes: str = ""
     submitted_by: str = ""

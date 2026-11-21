@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from llm_reliability_analytics.models.domain import OracleType, TestCase, TestSource
-from llm_reliability_analytics.storage.trace_repository import fetch_traces
+from llm_reliability_analytics.storage.trace_repository import fetch_traces, fetch_traces_page
 
 
 class TraceReplayReviewRequiredError(ValueError):
@@ -18,9 +18,17 @@ def load_trace_replay_test_cases(
     only_failed: bool = True,
     max_cases: int = 200,
 ) -> list[TestCase]:
-    traces = fetch_traces(run_id=source_run_id, only_failed=only_failed, max_rows=max_cases)
+    total, _ = fetch_traces_page(run_id=source_run_id, only_failed=only_failed, max_rows=1)
+    traces = fetch_traces(run_id=source_run_id, only_failed=only_failed, max_rows=max(total, 1))
     test_cases: list[TestCase] = []
+    seen_cases: set[str] = set()
     for trace in traces:
+        # Repeated attempts of one case replay it once; the cap counts distinct cases.
+        if trace["test_case_id"] in seen_cases:
+            continue
+        if len(test_cases) >= max_cases:
+            break
+        seen_cases.add(trace["test_case_id"])
         review_message = f"Review required for trace {trace['trace_id']}: "
         oracle_value = str(trace.get("oracle_type") or "").strip().lower()
         try:
@@ -35,6 +43,7 @@ def load_trace_replay_test_cases(
             raise TraceReplayReviewRequiredError(review_message + "missing original prompt.")
 
         expected_answer = trace.get("expected_answer")
+        # An empty string is valid: json_schema cases carry their truth in the oracle config.
         if not isinstance(expected_answer, str):
             raise TraceReplayReviewRequiredError(
                 review_message + "missing expected_answer snapshot; supply reviewed original evidence."

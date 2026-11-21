@@ -150,7 +150,7 @@ def _build_category_breakdown(report: ReliabilityReport) -> list[str]:
     )
     for item in ordered:
         lines.append(
-            f"| {item.category} | {item.total_test_cases} | {item.passed} | "
+            f"| {_markdown_text(item.category)} | {item.total_test_cases} | {item.passed} | "
             f"{item.failed} | {_pct(item.accuracy)} | {item.average_latency_ms:.2f} |"
         )
     return lines
@@ -167,7 +167,7 @@ def _build_error_breakdown(report: ReliabilityReport) -> list[str]:
     ordered_errors = sorted(report.error_distribution.items(), key=lambda item: (-item[1], item[0]))
     for error_type, count in ordered_errors:
         rate = count / report.total_test_cases if report.total_test_cases else 0.0
-        lines.append(f"| {error_type} | {count} | {_pct(rate)} |")
+        lines.append(f"| {_markdown_text(error_type)} | {count} | {_pct(rate)} |")
     return lines
 
 
@@ -207,8 +207,8 @@ def _build_conclusions(report: ReliabilityReport) -> list[str]:
     reliability_band = _reliability_band(report.overall_reliability_score)
     return [
         f"- The current run is in the **{reliability_band}** legacy heuristic band, not a validated deployment recommendation.",
-        f"- The weakest category is **{top_weak}** and should be prioritized for prompt/oracle refinement.",
-        f"- The most frequent error type is **{top_error}**; reducing this error will likely improve overall reliability fastest.",
+        f"- The weakest category is **{_markdown_text(top_weak)}** and should be prioritized for prompt/oracle refinement.",
+        f"- The most frequent error type is **{_markdown_text(top_error)}**; reducing this error will likely improve overall reliability fastest.",
         "- Next iteration should target high-failure categories while preserving low latency and repeatable behavior.",
     ]
 

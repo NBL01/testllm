@@ -763,3 +763,56 @@ def test_stop_request_just_after_claim_waits_for_registration(monkeypatch, tmp_p
     finally:
         registrar.join()
         workflow._release_progress(job_id)
+
+
+# ---------------------------------------------------------------------------
+# Findings from the second agy review (evidence correctness), fixed and pinned here.
+# ---------------------------------------------------------------------------
+
+def _scored(case: str, score: float, category: str = "math") -> Result:
+    return Result(run_id="r", test_case_id=case, category=category, actual_answer="x", is_correct=score == 1.0,
+                  score=score, latency_ms=1.0)
+
+
+def test_coverage_counts_low_score_cases_once_and_zero_score_by_score() -> None:
+    from llm_reliability_analytics.analytics.coverage_metrics import compute_coverage_metrics
+
+    repeated = [_scored("only-case", 0.1) for _ in range(10)]
+    assert compute_coverage_metrics(repeated).low_score_cases == 1  # one case, ten attempts
+    partial_credit = [_scored("a", 0.75, "summary"), _scored("b", 0.75, "summary"), _scored("c", 0.0, "math")]
+    assert compute_coverage_metrics(partial_credit).zero_score_categories == 1  # only "math" scored zero
+
+
+def test_trace_replay_replays_each_failed_case_once_and_caps_distinct_cases(monkeypatch) -> None:
+    from llm_reliability_analytics.datasets import trace_loader
+
+    def trace(case: str, attempt: int) -> dict:
+        return {"trace_id": f"run:{case}:{attempt}", "run_id": "run", "test_case_id": case, "attempt_index": attempt,
+                "prompt": f"{case}?", "expected_answer": "4", "oracle_type": "exact_match", "oracle_config": {},
+                "category": "math", "error_type": "wrong_answer", "score": 0.0}
+
+    traces = [trace("noisy", i) for i in range(1, 6)] + [trace("other", 1), trace("third", 1)]
+    monkeypatch.setattr(trace_loader, "fetch_traces_page", lambda **kw: (len(traces), traces[:1]))
+    monkeypatch.setattr(trace_loader, "fetch_traces", lambda **kw: traces[: kw["max_rows"]])
+    cases = trace_loader.load_trace_replay_test_cases("run", dataset_version="replay-v1", max_cases=2)
+    assert [case.prompt for case in cases] == ["noisy?", "other?"]  # five attempts of one case no longer crowd out the rest
+
+
+def test_markdown_tables_escape_dataset_category_and_error_names() -> None:
+    from llm_reliability_analytics.analytics.reliability import compute_reliability_report
+    from llm_reliability_analytics.reporting.markdown import _build_category_breakdown, _build_error_breakdown
+
+    hostile = "adv | 0 |\n## Injected"
+    report = compute_reliability_report([_scored("c1", 0.0, hostile).model_copy(update={"error_type": "x|y"})], run_id="r")
+    rendered = "\n".join(_build_category_breakdown(report) + _build_error_breakdown(report))
+    assert "\n## Injected" not in rendered and "adv | 0 |" not in rendered
+
+
+def test_csv_dataset_with_blank_trailing_lines_loads_cleanly(tmp_path) -> None:
+    from llm_reliability_analytics.ingestion.loader import load_test_cases
+
+    path = tmp_path / "cases.csv"
+    path.write_text("id,category,difficulty,prompt,expected_answer,oracle_type\n"
+                    "c1,math,easy,2 + 2?,4,exact_match\n,,,,,\n\n", encoding="utf-8")
+    cases, summary = load_test_cases(str(path))
+    assert len(cases) == 1 and summary.invalid_rows == 0

@@ -93,6 +93,8 @@ def _load_from_csv(path: Path) -> tuple[list[TestCase], IngestionSummary]:
     with path.open("r", encoding="utf-8", newline="") as file_handle:
         reader = csv.DictReader(file_handle)
         for row_index, row in enumerate(reader, start=1):
+            if not any(str(value).strip() for value in row.values() if value is not None):
+                continue  # blank line, e.g. a trailing row from a spreadsheet export
             total_rows += 1
             try:
                 test_case = _validate_row(row)

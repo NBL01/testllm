@@ -68,9 +68,9 @@ def compute_coverage_metrics(
     source_distribution = dict(Counter(sources))
     source_coverage = len(source_distribution)
 
-    low_score_cases = sum(1 for result in results if result.score < low_score_threshold)
+    low_score_cases = len({result.test_case_id for result in results if result.score < low_score_threshold})
 
-    category_stats: dict[str, list[bool]] = defaultdict(list)
+    category_stats: dict[str, list[float]] = defaultdict(list)
     failures_by_category: Counter[str] = Counter()
     failures_by_source: Counter[str] = Counter()
     total_failures = 0
@@ -78,17 +78,13 @@ def compute_coverage_metrics(
     for result in results:
         category = result.category or "unknown"
         source = result.test_source or "regression"
-        category_stats[category].append(result.is_correct)
+        category_stats[category].append(result.score)
         if not result.is_correct:
             total_failures += 1
             failures_by_category[category] += 1
             failures_by_source[source] += 1
 
-    zero_score_categories = sum(
-        1
-        for values in category_stats.values()
-        if values and (sum(1 for value in values if value) / len(values)) == 0.0
-    )
+    zero_score_categories = sum(1 for scores in category_stats.values() if scores and max(scores) == 0.0)
 
     if total_failures == 0:
         failure_concentration = 0.0
