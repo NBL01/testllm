@@ -188,3 +188,20 @@ export type ModelsResponse = {
   available_models: string[];
   error: string | null;
 };
+
+export type MetricsReport = JobSummaryResult["report"] & { run_id: string };
+
+export type CaseChange = {
+  test_case_id: string;
+  category: string;
+  attempts: number;
+  baseline_passed: number;
+  candidate_passed: number;
+};
+
+export type RunComparison = {
+  eligibility: { eligible: boolean; research_only: boolean; issues: string[] };
+  baseline_report: MetricsReport;
+  candidate_report: MetricsReport;
+  case_changes: { regressions: CaseChange[]; improvements: CaseChange[] };
+};

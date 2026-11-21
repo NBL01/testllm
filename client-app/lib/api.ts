@@ -9,6 +9,7 @@ import type {
   JobSummaryResult,
   ModelsResponse,
   QueueScheduleResult,
+  RunComparison,
   QueueStatsResult,
   TracesResponse
 } from "./types";
@@ -145,4 +146,12 @@ export function getHealth(): Promise<HealthResponse> {
 
 export function getModels(): Promise<ModelsResponse> {
   return requestJson<ModelsResponse>("/models");
+}
+
+/** Backend-owned comparison; HTTP 409 carries the eligibility issues when runs are not comparable. */
+export function compareRuns(baselineRunId: string, candidateRunId: string): Promise<RunComparison> {
+  return requestJson<RunComparison>("/internal/metrics/compare", {
+    method: "POST",
+    body: { run_ids: [baselineRunId, candidateRunId] }
+  });
 }

@@ -622,6 +622,10 @@ def _eligibility(runs: dict[str, dict], results: dict[str, list[TestResult]]) ->
         "provider", "dataset_version", "evaluation_mode", "mode", "temperature", "max_output_tokens", "repeat_count",
     )}
     fields["dataset_sha256"] = [item.get("dataset_sha256") for item in metadata]
+    if all(run.get("mode") in REAL_MODES for run in runs.values()):
+        # Between real executions the serving stack (Ollama vs an OpenAI-compatible
+        # server) is part of the system under test, like model_name; mock vs real is not.
+        del fields["provider"], fields["mode"]
     fields.update({key: [config.get(key) for config in configurations]
                    for key in ("oracle_profile", "timeout_seconds", "seed")})
     for key, values in fields.items():
@@ -660,6 +664,27 @@ def _eligibility(runs: dict[str, dict], results: dict[str, list[TestResult]]) ->
         issues.append("input_config")
     issues = list(dict.fromkeys(issues))
     return {"eligible": not issues, "research_only": bool(issues), "issues": issues}
+
+
+REAL_MODES = {"real_local", "real_api"}
+
+
+def _case_changes(baseline: list[TestResult], candidate: list[TestResult]) -> dict[str, list[dict[str, Any]]]:
+    """Cases whose passed-attempt count moved between two eligible runs (same cases and attempts)."""
+    def tally(rows: list[TestResult]) -> dict[str, tuple[int, int, str]]:
+        counts: dict[str, list] = {}
+        for row in rows:
+            entry = counts.setdefault(row.test_case_id, [0, 0, row.category or "uncategorized"])
+            entry[0] += int(row.is_correct)
+            entry[1] += 1
+        return {case: (passed, attempts, category) for case, (passed, attempts, category) in counts.items()}
+
+    before, after = tally(baseline), tally(candidate)
+    changes = [{"test_case_id": case, "category": before[case][2], "attempts": before[case][1],
+                "baseline_passed": before[case][0], "candidate_passed": after[case][0]}
+               for case in sorted(before) if case in after and before[case][0] != after[case][0]]
+    return {"regressions": [item for item in changes if item["candidate_passed"] < item["baseline_passed"]],
+            "improvements": [item for item in changes if item["candidate_passed"] > item["baseline_passed"]]}
 
 
 @router.get("/metrics/runs/{run_id}")
@@ -703,6 +728,7 @@ def metrics_compare(request: MetricsRequest) -> dict[str, Any]:
         "baseline_report": reports[0],
         "candidate_report": reports[1],
         "comparison_report": compute_run_comparison_report(reports, baseline_run_id=request.run_ids[0]),
+        "case_changes": _case_changes(results[request.run_ids[0]], results[request.run_ids[1]]),
     }
 
 

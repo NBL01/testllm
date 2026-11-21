@@ -16,6 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/jobs" className="brand"><span className="brand-mark" aria-hidden="true" />LLM Reliability</Link>
             <nav aria-label="Primary" className="topbar-nav">
               <Link href="/jobs">Jobs</Link>
+              <Link href="/compare">Compare</Link>
               <Link href="/jobs/new">New job</Link>
             </nav>
           </div>

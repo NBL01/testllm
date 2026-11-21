@@ -64,6 +64,17 @@ def test_matched_stored_configuration_allows_comparison(client):
     assert payload["baseline_report"]["accuracy"] == 0
     assert payload["candidate_report"]["accuracy"] == 1
     assert payload["comparison_report"]["compared_runs"] == 2
+    assert payload["case_changes"] == {"regressions": [], "improvements": [
+        {"test_case_id": "case", "category": "math", "attempts": 1, "baseline_passed": 0, "candidate_passed": 1}]}
+
+
+def test_real_providers_compare_across_serving_stacks_but_not_against_mock(client):
+    persist(run_settings={"provider": "ollama", "mode": "real_local"})
+    persist("b", model="model-b", run_settings={"provider": "openai_compatible", "mode": "real_api"})
+    assert client.post("/internal/metrics/eligibility", json={"run_ids": ["a", "b"]}).json()["eligible"] is True
+    persist("c", model="model-c")  # mock
+    issues = client.post("/internal/metrics/eligibility", json={"run_ids": ["a", "c"]}).json()["issues"]
+    assert "provider" in issues and "mode" in issues
 
 
 @pytest.mark.parametrize("change,expected", [

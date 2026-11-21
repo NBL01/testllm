@@ -152,6 +152,25 @@ test('job search applies on Enter', async ({ page, request }) => {
   await expect(page.locator(`a[href="/jobs/${created.job_id}"]`).first()).toBeVisible();
 });
 
+test('compare shows per-case movement for comparable runs and explains refusals', async ({ page, request }) => {
+  const run = async (model_name: string, input_path = 'sample_test_cases.jsonl') => {
+    const job = await (await request.post(`${api}/evaluation-jobs`, { data: { provider: 'mock', model_name, input_path, limit: 6 } })).json();
+    expect((await request.post(`${api}/evaluation-jobs/${job.job_id}/run?wait=true`)).ok()).toBeTruthy();
+    return job.job_id as string;
+  };
+  const failing = await run('mock-failing');
+  const baseline = await run('mock-baseline');
+  await page.goto(`/compare?baseline=${failing}&candidate=${baseline}`);
+  await expect(page.getByText('comparable', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Improvements \(\d+\)$/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /Pass rate/ })).toContainText('pts');
+
+  const adversarial = await run('mock-baseline', 'data/adversarial/mvp_adversarial_v1.jsonl');
+  await page.goto(`/compare?baseline=${baseline}&candidate=${adversarial}`);
+  await expect(page.getByRole('heading', { name: 'Not comparable' })).toBeVisible();
+  await expect(page.getByText('The frozen dataset contents differ.')).toBeVisible();
+});
+
 test('both local provider names disclose missing models', async ({ page }) => {
   await page.route(`${api}/models`, route => route.fulfill({ json: {
     provider: 'ollama', ollama_reachable: false, installed_models: [], recommended_models: [],

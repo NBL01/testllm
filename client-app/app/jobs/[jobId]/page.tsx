@@ -183,6 +183,7 @@ function JobDetail({ jobId }: { jobId: string }) {
           {canRun && <button className="btn btn-primary" disabled={busy} onClick={() => void performAction("Running", () => runJob(jobId))} type="button">{job?.status === "queued" ? "Run This Queued Job" : "Run Evaluation"}</button>}
           {canQueue && <button className="btn btn-secondary" disabled={busy} onClick={() => void performAction("Queueing", () => queueJob(jobId))} type="button">Queue Job</button>}
           {canRun && <button className="btn btn-secondary" disabled={busy} onClick={handleCancel} type="button">Cancel Job</button>}
+          {job?.status === "completed" && <Link className="btn btn-secondary" href={`/compare?baseline=${jobId}`}>Compare</Link>}
           <Link className="btn btn-secondary" href="/jobs">Back to Jobs</Link>
         </div>
       </section>

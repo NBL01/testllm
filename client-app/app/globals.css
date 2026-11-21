@@ -130,6 +130,10 @@ a:hover {
   box-shadow: 0 12px 30px rgba(18, 35, 34, 0.08);
 }
 
+.page > .panel + .panel {
+  margin-top: 1rem;
+}
+
 .grid {
   display: grid;
   gap: 1rem;
@@ -573,6 +577,46 @@ pre {
   justify-content: space-between;
   gap: 0.6rem;
   margin-top: 0.75rem;
+}
+
+.delta-good {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.delta-bad {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 1rem;
+}
+
+.case-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.case-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #e3ecea;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.case-move {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .empty {
