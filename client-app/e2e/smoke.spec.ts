@@ -171,6 +171,25 @@ test('compare shows per-case movement for comparable runs and explains refusals'
   await expect(page.getByText('The frozen dataset contents differ.')).toBeVisible();
 });
 
+test('two jobs ticked on the board open a comparison in selection order', async ({ page, request }) => {
+  const stamp = Date.now();
+  const run = async (model_name: string, project_name: string) => {
+    const job = await (await request.post(`${api}/evaluation-jobs`, { data: { provider: 'mock', model_name, project_name,
+      input_path: 'sample_test_cases.jsonl', limit: 4 } })).json();
+    expect((await request.post(`${api}/evaluation-jobs/${job.job_id}/run?wait=true`)).ok()).toBeTruthy();
+    return job.job_id as string;
+  };
+  const baseline = await run('mock-failing', `pick-a-${stamp}`);
+  const candidate = await run('mock-baseline', `pick-b-${stamp}`);
+  await page.goto('/jobs');
+  await page.getByLabel(`Select pick-a-${stamp} for comparison`).check();
+  await expect(page.getByText('Select one more completed job to compare')).toBeVisible();
+  await page.getByLabel(`Select pick-b-${stamp} for comparison`).check();
+  await page.getByRole('link', { name: 'Compare selected' }).click();
+  await expect(page).toHaveURL(`/compare?baseline=${baseline}&candidate=${candidate}`);
+  await expect(page.getByText('comparable', { exact: true })).toBeVisible();
+});
+
 test('both local provider names disclose missing models', async ({ page }) => {
   await page.route(`${api}/models`, route => route.fulfill({ json: {
     provider: 'ollama', ollama_reachable: false, installed_models: [], recommended_models: [],

@@ -478,6 +478,13 @@ pre {
   margin-top: 0.3rem;
 }
 
+.row-select {
+  width: 18px;
+  height: 18px;
+  margin: 0 0.45rem 0 0;
+  vertical-align: -3px;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;

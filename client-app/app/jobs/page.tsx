@@ -28,6 +28,8 @@ export default function JobsPage() {
   const [error, setError] = useState<string>("");
   const [processing, setProcessing] = useState(false);
   const [queueOutcome, setQueueOutcome] = useState<QueueScheduleResult | null>(null);
+  // Completed jobs picked for comparison, in selection order: the first is the baseline.
+  const [selected, setSelected] = useState<string[]>([]);
   const processLock = useRef(false);
   const mounted = useRef(true);
   const [refresh, setRefresh] = useState(0);
@@ -123,6 +125,8 @@ export default function JobsPage() {
           <button className="btn btn-secondary" onClick={applySearch} type="button">
             Apply Search
           </button>
+          {selected.length === 2 ? <Link className="btn btn-primary" href={`/compare?baseline=${selected[0]}&candidate=${selected[1]}`}>Compare selected</Link>
+            : <span className="meta">{selected.length ? "Select one more completed job to compare" : "Tick two completed jobs to compare them"}</span>}
           {searchFilter && <button
             className="btn btn-secondary"
             onClick={() => {
@@ -176,6 +180,11 @@ export default function JobsPage() {
                   return (
                     <tr key={job.job_id}>
                       <td>
+                        {job.status === "completed" && <input type="checkbox" className="row-select"
+                          aria-label={`Select ${job.project_name || job.job_id} for comparison`}
+                          checked={selected.includes(job.job_id)}
+                          disabled={!selected.includes(job.job_id) && selected.length === 2}
+                          onChange={event => setSelected(current => event.target.checked ? [...current, job.job_id] : current.filter(id => id !== job.job_id))} />}
                         <Link href={`/jobs/${job.job_id}`}>
                           <strong>{job.project_name || `Job ${job.job_id.slice(0, 8)}`}</strong>
                         </Link>
