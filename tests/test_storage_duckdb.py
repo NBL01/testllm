@@ -238,3 +238,40 @@ def test_insert_batch_results_stores_each_attempt_separately(monkeypatch, tmp_pa
     stored_results = fetch_results_for_run(run.id)
     assert len(stored_results) == 2
     assert [result.attempt_index for result in stored_results] == [1, 2]
+
+
+def test_connects_racing_the_last_close_and_checkpoint_succeed(monkeypatch, tmp_path) -> None:
+    """Concurrent API reads must not 500 while a run's writing connection closes."""
+    import threading
+
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "race.duckdb"))
+    initialize_storage_schema()
+    readers, rounds, errors = 6, 20, []
+    start, done = threading.Barrier(readers + 1), threading.Barrier(readers + 1)
+
+    def read() -> None:
+        for _ in range(rounds):
+            start.wait()
+            try:
+                conn = get_connection()
+                conn.execute("SELECT count(*) FROM test_runs").fetchone()
+                conn.close()
+            except duckdb.Error as exc:
+                errors.append(str(exc))
+            done.wait()
+
+    def write() -> None:
+        for _ in range(rounds):
+            conn = get_connection()
+            conn.execute("CREATE TABLE IF NOT EXISTS ballast (i INTEGER, s TEXT)")
+            conn.execute("INSERT INTO ballast SELECT range, repeat('x', 100) FROM range(5000)")
+            start.wait()  # readers connect while this last connection closes and checkpoints
+            conn.close()
+            done.wait()
+
+    threads = [threading.Thread(target=read) for _ in range(readers)] + [threading.Thread(target=write)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=120)
+    assert errors == []

@@ -11,6 +11,7 @@ Why DuckDB for this project:
 import logging
 import os
 import shutil
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -448,7 +449,19 @@ def get_db_path() -> Path:
 def get_connection() -> duckdb.DuckDBPyConnection:
     db_path = get_db_path()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = duckdb.connect(str(db_path))
+    # A connect racing the last connection's close (and its checkpoint) sees the file
+    # still attached to the instance being torn down. Concurrent API reads hit this.
+    # Ponytail: bounded 5s retry; if checkpoints outgrow it, hold one process-wide
+    # instance and hand out cursors (changes when the file is released for backups).
+    deadline = time.monotonic() + 5.0
+    while True:
+        try:
+            conn = duckdb.connect(str(db_path))
+            break
+        except duckdb.BinderException as exc:
+            if "Unique file handle conflict" not in str(exc) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
     conn.execute("SET TimeZone='UTC'")
     return conn
 
