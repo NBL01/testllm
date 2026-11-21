@@ -477,6 +477,24 @@ def fetch_results_for_run(run_id: str) -> list[TestResult]:
     ]
 
 
+def fetch_attempt_counts(run_ids: list[str]) -> dict[str, tuple[int, int]]:
+    """Map run_id -> (attempts, passed attempts) with one grouped query."""
+    if not run_ids:
+        return {}
+
+    initialize_schema()
+    conn = get_connection()
+    try:
+        placeholders = ", ".join(["?"] * len(run_ids))
+        rows = conn.execute(
+            f"SELECT run_id, count(*), count(*) FILTER (WHERE is_correct) FROM test_results WHERE run_id IN ({placeholders}) GROUP BY run_id",
+            run_ids,
+        ).fetchall()
+        return {row[0]: (int(row[1]), int(row[2])) for row in rows}
+    finally:
+        conn.close()
+
+
 def _next_repetition_index(run_group_id: str) -> int:
     conn = get_connection()
     row = conn.execute(

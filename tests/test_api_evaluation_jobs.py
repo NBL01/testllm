@@ -572,3 +572,41 @@ def test_evaluation_job_create_rejects_empty_local_model_name(monkeypatch, tmp_p
     )
     assert create_response.status_code == 422
     assert create_response.json()["detail"][0]["loc"] == ["body", "model_name"]
+
+
+def test_evaluation_job_list_reports_attempt_outcomes(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "api_eval_jobs_attempt_outcomes.duckdb"
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
+    client = TestClient(app)
+
+    create_payload = {
+        "input_path": "sample_test_cases.jsonl",
+        "model_name": "mock-failing",
+        "repeat_count": 2,
+        "limit": 3,
+    }
+    create_response_1 = client.post("/evaluation-jobs", json=create_payload)
+    assert create_response_1.status_code == 201
+    job_id_1 = create_response_1.json()["job_id"]
+    assert create_response_1.json()["status"] == "draft"
+
+    create_response_2 = client.post("/evaluation-jobs", json=create_payload)
+    assert create_response_2.status_code == 201
+    job_id_2 = create_response_2.json()["job_id"]
+    assert create_response_2.json()["status"] == "draft"
+
+    run_response = client.post(f"/evaluation-jobs/{job_id_1}/run")
+    assert run_response.status_code == 200
+
+    list_response = client.get("/evaluation-jobs")
+    assert list_response.status_code == 200
+    items_by_id = {item["job_id"]: item for item in list_response.json()["items"]}
+
+    run_item = items_by_id[job_id_1]
+    draft_item = items_by_id[job_id_2]
+
+    assert run_item["attempts"] == 6
+    assert isinstance(run_item["passed_attempts"], int)
+    assert 0 <= run_item["passed_attempts"] <= 6
+    assert draft_item["attempts"] is None
+    assert draft_item["passed_attempts"] is None

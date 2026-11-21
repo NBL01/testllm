@@ -300,14 +300,15 @@ export default function NewJobPage() {
       </section>
 
       <section className="panel grid" style={{ marginBottom: "1rem" }}>
-        <h2 style={{ margin: 0 }}>System Status</h2>
-        <div className="btn-row">
+        <div className="panel-head">
+          <h2>System Status</h2>
           <button className="btn btn-secondary" type="button" disabled={loadingOptions || submitting || !!successJobId}
             onClick={() => setDiscoveryAttempt(value => value + 1)}>Recheck Status and Options</button>
         </div>
-        <p className="meta">API: <code>{API_BASE_URL}</code>. Configure <code>NEXT_PUBLIC_API_BASE_URL</code> in
+        {statusPanel.backend === "down" ? <p className="meta">API: <code>{API_BASE_URL}</code>. Configure <code>NEXT_PUBLIC_API_BASE_URL</code> in
           <code> client-app/.env.local</code>, then restart Next.js. If unavailable, run from the repository root:
           <code> .venv/bin/python -m uvicorn llm_reliability_analytics.main:app --app-dir src --reload</code>.</p>
+          : <p className="meta">API: <code>{API_BASE_URL}</code></p>}
         <div className="form-grid" aria-live="polite">
           <div>
             <strong>Backend API</strong>

@@ -28,7 +28,7 @@ from llm_reliability_analytics.storage.evaluation_job_repository import (
     EvaluationJobCreate,
     EvaluationJobStatus,
 )
-from llm_reliability_analytics.storage.duckdb_store import RunAggregatedSummary
+from llm_reliability_analytics.storage.duckdb_store import RunAggregatedSummary, fetch_attempt_counts
 from llm_reliability_analytics.test_authoring.models import CandidateStatus, CandidateTestCase
 from llm_reliability_analytics.test_authoring.service import CandidateAuthoringService
 from llm_reliability_analytics.workflow.evaluation_jobs import (
@@ -167,11 +167,16 @@ class CandidateEventsResponse(BaseModel):
     events: list[CandidateReviewEvent]
 
 
+class EvaluationJobListItem(EvaluationJob):
+    attempts: int | None = None
+    passed_attempts: int | None = None
+
+
 class EvaluationJobListResponse(BaseModel):
     total: int
     limit: int
     offset: int
-    items: list[EvaluationJob]
+    items: list[EvaluationJobListItem]
 
 
 class EvaluationJobFailedCasesResponse(BaseModel):
@@ -387,11 +392,23 @@ def list_evaluation_jobs_endpoint(
         sort_order=sort_order,
         search_query=q,
     )
+    counts = fetch_attempt_counts([job.linked_run_id for job in result.items if job.linked_run_id])
+    items = []
+    for job in result.items:
+        outcome = counts.get(job.linked_run_id) if job.linked_run_id else None
+        attempts, passed_attempts = outcome if outcome is not None else (None, None)
+        items.append(
+            EvaluationJobListItem(
+                **job.model_dump(),
+                attempts=attempts,
+                passed_attempts=passed_attempts,
+            )
+        )
     return EvaluationJobListResponse(
         total=result.total,
         limit=result.limit,
         offset=result.offset,
-        items=result.items,
+        items=items,
     )
 
 

@@ -29,6 +29,9 @@ export type EvaluationJob = {
   started_at: string | null;
   completed_at: string | null;
   updated_at: string;
+  /** List responses only: attempt outcomes of the linked run, null before execution. */
+  attempts?: number | null;
+  passed_attempts?: number | null;
 };
 
 export type EvaluationJobListResponse = {
@@ -84,6 +87,9 @@ export type JobSummaryResult = {
     measurement_notes?: string[];
     latency_sources?: Record<string, number>;
     unique_test_cases?: number;
+    p95_latency_ms?: number;
+    category_reports?: { category: string; total_test_cases: number; passed: number; failed: number; accuracy: number }[];
+    error_distribution?: Record<string, number>;
   };
 };
 

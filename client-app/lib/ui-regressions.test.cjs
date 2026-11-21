@@ -27,13 +27,17 @@ const moduleParent = module;
 const job = {
   job_id: 'job-1', status: 'completed', linked_run_id: 'run-1', provider: 'mock', model_name: 'mock-baseline',
   input_path: 'data/raw/sample_test_cases.jsonl', dataset_version: 'v1', evaluation_mode: 'regression',
-  oracle_profile: 'default', created_at: null, started_at: null, completed_at: null, updated_at: null
+  oracle_profile: 'default', created_at: null, started_at: null, completed_at: null, updated_at: null,
+  repeat_count: 2, temperature: 0, max_output_tokens: 128, limit: null
 };
 const report = {
   total_test_cases: 6, unique_test_cases: 3, passed: 4, failed: 2, accuracy: 2 / 3,
   average_latency_ms: 12, overall_reliability_score: 0.7, metric_version: 'legacy-v1',
   repeated_case_count: 3, schema_case_count: 1, measurement_notes: ['Scope is limited to dataset oracle checks.'],
-  latency_sources: { mock_simulated: 4, observed: 2 }
+  latency_sources: { mock_simulated: 4, observed: 2 },
+  category_reports: [{ category: 'math', total_test_cases: 4, passed: 4, failed: 0, accuracy: 1 },
+    { category: 'safety', total_test_cases: 2, passed: 0, failed: 2, accuracy: 0 }],
+  error_distribution: { wrong_answer: 2 }
 };
 
 function renderDetail(reportPayload, failures = {}) {
@@ -61,12 +65,39 @@ test('detail route reads the active client parameter without synchronous page pr
 
 test('detail renders backend unique_test_cases and latency source count dictionary', () => {
   const html = renderDetail(report);
-  assert.match(html, /Unique cases<\/strong><div>3<\/div>/);
+  assert.match(html, /Unique cases<\/div><div class="kpi-value">3<\/div>/);
   assert.match(html, /mock_simulated: 4/);
   assert.match(html, /observed: 2/);
   assert.match(html, /3 repeated cases eligible/);
   assert.match(html, /1 schema cases eligible/);
   assert.match(html, /Scope is limited to dataset oracle checks/);
+  assert.match(html, /2x repeat · temp 0 · 128 tokens/);
+  // Weakest category first; a failure share is not a pass rate, so it gets the neutral tone.
+  assert.ok(html.indexOf('<span>safety</span>') < html.indexOf('<span>math</span>'));
+  assert.match(html, /tone-low" style="width:0%"/);
+  assert.match(html, /tone-neutral" style="width:100%"/);
+});
+
+test('job list shows run outcomes, queue count and only recorded owner metadata', () => {
+  const { default: Page } = loadSource('../app/jobs/page.tsx', {
+    'next/link': { default: props => React.createElement('a', props) },
+    '@/lib/api': {},
+    '@/lib/useRemoteResource': { useRemoteResource: key => key === 'queue-stats'
+      ? { data: { total: 2, by_status: { draft: 1, queued: 0, running: 0, completed: 1, failed: 0, canceled: 0 } }, error: '', loading: false }
+      : { data: { total: 2, items: [
+        { ...job, job_id: 'done-0001-x', project_name: 'Support bot', attempts: 60, passed_attempts: 6,
+          submitted_by: 'nbl', client_name: '', team_name: 'Evals' },
+        { ...job, job_id: 'draft-002-y', status: 'draft', linked_run_id: null, project_name: '', attempts: null,
+          passed_attempts: null, submitted_by: '', client_name: '', team_name: '' }
+      ] }, error: '', loading: false } }
+  });
+  const html = renderToStaticMarkup(React.createElement(Page));
+  assert.match(html, /<strong>10%<\/strong> <span class="meta">6\/60 passed<\/span>/);
+  assert.match(html, /Not run/);
+  assert.match(html, /nbl · Evals/);
+  assert.match(html, /Job draft-00/);
+  assert.match(html, /Run queued jobs \(0\)<\/button>/);
+  assert.match(html, /aria-pressed="true" type="button">All<span class="chip-count">2<\/span>/);
 });
 
 test('zero eligible cases are not measured and markdown failure cannot hide metrics or CSV', () => {
@@ -76,7 +107,7 @@ test('zero eligible cases are not measured and markdown failure cannot hide metr
   assert.match(html, /Latency sources: not reported/);
   assert.match(html, /Report unavailable/);
   assert.match(html, /Download All Failed Attempts .csv/);
-  assert.match(html, /Unique cases<\/strong><div>3<\/div>/);
+  assert.match(html, /Unique cases<\/div><div class="kpi-value">3<\/div>/);
 });
 
 // Deterministic hook lifecycle harness. Effects flush separately to expose the
@@ -244,7 +275,7 @@ test('global queue reports per-job failures even on an HTTP success', async () =
   });
   const render = () => harness.render(Page);
   const tree = render(); harness.flush();
-  elements(tree).find(element => element.type === 'button' && textOf(element).startsWith('Process Global')).props.onClick();
+  elements(tree).find(element => element.type === 'button' && textOf(element).startsWith('Run queued')).props.onClick();
   completed.resolve({ processed_count: 2, results: [{}], failures: [{ job_id: 'broken-job', error: 'Provider unavailable' }] });
   await completed.promise;
   assert.match(textOf(render()), /broken-job.*Provider unavailable/);
