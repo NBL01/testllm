@@ -35,6 +35,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     EvaluationJobCancelRequest,
     EvaluationJobClientReportPayload,
     EvaluationJobConflictError,
+    EvaluationJobQueueScheduleResult,
     EvaluationJobFailedCase,
     EvaluationJobFailedCasesResult,
     EvaluationJobListResult,
@@ -50,6 +51,8 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     duplicate_job,
     get_job_failed_cases,
     get_job_failed_cases_csv,
+    schedule_queued_jobs,
+    start_job,
     get_job_report_payload,
     get_job_client_report_payload,
     get_job,
@@ -425,9 +428,17 @@ def get_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.post("/evaluation-jobs/{job_id}/run", response_model=EvaluationJobRunResult)
-def run_evaluation_job_endpoint(job_id: str) -> EvaluationJobRunResult:
+WAIT_DESCRIPTION = "Block until execution finishes (CLI/tests). By default the job is scheduled and 202 returns at once."
+
+
+@router.post("/evaluation-jobs/{job_id}/run", response_model=EvaluationJobRunResult | EvaluationJob, status_code=202)
+def run_evaluation_job_endpoint(
+    job_id: str, response: Response, wait: bool = Query(default=False, description=WAIT_DESCRIPTION),
+) -> EvaluationJobRunResult | EvaluationJob:
     try:
+        if not wait:
+            return start_job(job_id)
+        response.status_code = 200
         return run_job(job_id)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -457,10 +468,16 @@ def queue_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@router.post("/evaluation-jobs/process-queue", response_model=EvaluationJobQueueProcessResult)
+@router.post("/evaluation-jobs/process-queue",
+             response_model=EvaluationJobQueueProcessResult | EvaluationJobQueueScheduleResult, status_code=202)
 def process_evaluation_jobs_queue_endpoint(
+    response: Response,
     max_jobs: int = Query(default=10, ge=1, le=500),
-) -> EvaluationJobQueueProcessResult:
+    wait: bool = Query(default=False, description=WAIT_DESCRIPTION),
+) -> EvaluationJobQueueProcessResult | EvaluationJobQueueScheduleResult:
+    if not wait:
+        return schedule_queued_jobs(max_jobs=max_jobs)
+    response.status_code = 200
     try:
         return process_queued_jobs(max_jobs=max_jobs)
     except EvaluationJobNotFoundError as exc:

@@ -48,7 +48,7 @@ class EvaluationJob(BaseModel):
 class EvaluationJobCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, allow_inf_nan=False)
     input_path: str = Field(default="sample_test_cases.jsonl", min_length=1)
-    provider: Literal["mock", "ollama", "local"] = "mock"
+    provider: Literal["mock", "ollama", "local", "openai_compatible"] = "mock"
     model_name: str = Field(default="mock-baseline", min_length=1)
     dataset_version: str | None = None
     evaluation_mode: Literal["regression", "exploratory", "adversarial", "trace_replay"] = "regression"

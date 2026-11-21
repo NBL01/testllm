@@ -107,7 +107,7 @@ def run_batch_workflow(
     temperature: float = 0.0,
     max_output_tokens: int = 128,
     timeout_seconds: float = 30.0,
-    run_mode: Literal["mock", "real_local", "offline_replay", "real"] = "mock",
+    run_mode: Literal["mock", "real_local", "real_api", "offline_replay", "real"] = "mock",
     notes: str = "",
     run_group_id: str | None = None,
     mock_mode: Literal["deterministic", "semi_random"] = "deterministic",
@@ -168,7 +168,7 @@ def run_trace_replay_workflow(
     temperature: float = 0.0,
     max_output_tokens: int = 128,
     timeout_seconds: float = 30.0,
-    run_mode: Literal["mock", "real_local", "offline_replay", "real"] = "mock",
+    run_mode: Literal["mock", "real_local", "real_api", "offline_replay", "real"] = "mock",
     mock_mode: Literal["deterministic", "semi_random"] = "deterministic",
     seed: int = 42,
 ) -> RunBatchWorkflowResult:
@@ -240,7 +240,7 @@ def _run_prepared_test_cases(
     temperature: float,
     max_output_tokens: int,
     timeout_seconds: float,
-    run_mode: Literal["mock", "real_local", "offline_replay", "real"],
+    run_mode: Literal["mock", "real_local", "real_api", "offline_replay", "real"],
     notes: str,
     run_group_id: str | None,
     mock_mode: Literal["deterministic", "semi_random"],
@@ -251,11 +251,12 @@ def _run_prepared_test_cases(
 ) -> RunBatchWorkflowResult:
     effective_mock_mode = mode if mode is not None else mock_mode
     execution_mode = resolve_execution_mode(provider=provider, mode=run_mode)
-    normalized_provider = "ollama" if execution_mode == "real_local" else "mock"
+    normalized_provider = {"real_local": "ollama", "real_api": "openai_compatible"}.get(execution_mode, "mock")
+    # A remote model has no safe default: an empty name is rejected by the client factory.
     resolved_model_name = (model_name or "").strip() or (
-        DEFAULT_LOCAL_MODEL if execution_mode == "real_local" else "mock-baseline"
+        DEFAULT_LOCAL_MODEL if execution_mode == "real_local" else "" if execution_mode == "real_api" else "mock-baseline"
     )
-    normalized_run_mode = "real_local" if execution_mode == "real_local" else "mock"
+    normalized_run_mode = execution_mode
 
     resolved_dataset_version = dataset_version or test_cases[0].dataset_version
     for test_case in test_cases:

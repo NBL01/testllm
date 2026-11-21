@@ -72,9 +72,10 @@ def render_markdown_report(run_report: RunReportResult) -> str:
     lines.append("")
     lines.extend(_build_consistency_summary(report))
     lines.append("")
-    lines.append("## Overall Reliability Score")
+    lines.append("## Legacy Composite Score")
     lines.append("")
-    lines.append(f"- Overall Reliability Score: **{report.overall_reliability_score:.3f}**")
+    lines.append(f"- Overall Reliability Score ({report.metric_version} composite, kept for comparison with older runs): "
+                 f"**{report.overall_reliability_score:.3f}**")
     lines.append("")
     lines.append("## Conclusions")
     lines.append("")
@@ -115,8 +116,11 @@ def _markdown_text(value: Any) -> str:
 def _build_executive_summary(report: ReliabilityReport) -> str:
     return (
         f"This run evaluated **{report.total_test_cases}** attempts across "
-        f"**{report.unique_test_cases}** unique test cases, reached **{_pct(report.accuracy)}** accuracy, "
-        f"and achieved an overall reliability score of **{report.overall_reliability_score:.3f}**."
+        f"**{report.unique_test_cases}** unique test cases and reached a **{_pct(report.accuracy)}** pass rate. "
+        + (f"**{_pct(report.pass_hat_k)}** of cases passed all {report.repeat_k} attempts (pass^{report.repeat_k}) and "
+           f"**{_pct(report.pass_at_k)}** passed at least once (pass@{report.repeat_k})."
+           if report.pass_hat_k is not None and report.pass_at_k is not None
+           else "Consistency across repeats was not measured (cases need the same 2+ attempts).")
     )
 
 
@@ -128,8 +132,16 @@ def _build_core_metrics_table(report: ReliabilityReport) -> list[str]:
         f"| Unique Test Cases | {report.unique_test_cases} |",
         f"| Passed | {report.passed} |",
         f"| Failed | {report.failed} |",
-        f"| Accuracy | {_pct(report.accuracy)} |",
+        f"| Accuracy (pass rate over attempts) | {_pct(report.accuracy)} |",
+        f"| pass^k: cases passing all attempts | {_optional_pct(report.pass_hat_k, report.repeat_k)} |",
+        f"| pass@k: cases passing at least once | {_optional_pct(report.pass_at_k, report.repeat_k)} |",
+        f"| Schema-only pass rate | {'not measured (no json_schema attempts)' if report.schema_pass_rate is None else _pct(report.schema_pass_rate)} |",
+        f"| Latency p50 / p95 | {report.p50_latency_ms:.2f} / {report.p95_latency_ms:.2f} ms |",
     ]
+
+
+def _optional_pct(value: float | None, k: int | None) -> str:
+    return "not measured (needs the same 2+ attempts per case)" if value is None else f"{_pct(value)} (k={k})"
 
 
 def _build_category_breakdown(report: ReliabilityReport) -> list[str]:
@@ -170,6 +182,7 @@ def _build_error_breakdown(report: ReliabilityReport) -> list[str]:
 def _build_latency_summary(report: ReliabilityReport) -> list[str]:
     return [
         f"- Average Latency: **{report.average_latency_ms:.2f} ms**",
+        f"- P50 Latency: **{report.p50_latency_ms:.2f} ms**",
         f"- P95 Latency: **{report.p95_latency_ms:.2f} ms**",
         f"- Failure Density: **{report.failure_density_per_1000:.2f} failures / 1000 attempts**",
         "- Latency Sources (attempt counts): " + (

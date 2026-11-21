@@ -37,7 +37,8 @@ const report = {
   latency_sources: { mock_simulated: 4, observed: 2 },
   category_reports: [{ category: 'math', total_test_cases: 4, passed: 4, failed: 0, accuracy: 1 },
     { category: 'safety', total_test_cases: 2, passed: 0, failed: 2, accuracy: 0 }],
-  error_distribution: { wrong_answer: 2 }
+  error_distribution: { wrong_answer: 2 },
+  repeat_k: 2, pass_at_k: 1, pass_hat_k: 0.5, p50_latency_ms: 10, p95_latency_ms: 20
 };
 
 function renderDetail(reportPayload, failures = {}) {
@@ -72,6 +73,9 @@ test('detail renders backend unique_test_cases and latency source count dictiona
   assert.match(html, /1 schema cases eligible/);
   assert.match(html, /Scope is limited to dataset oracle checks/);
   assert.match(html, /2x repeat · temp 0 · 128 tokens/);
+  assert.match(html, /pass\^2<\/div><div class="kpi-value">50.0%/);
+  assert.match(html, /pass@2<\/div><div class="kpi-value">100.0%/);
+  assert.match(html, /Legacy composite \(legacy-v1\): <code>0.700/);
   // Weakest category first; a failure share is not a pass rate, so it gets the neutral tone.
   assert.ok(html.indexOf('<span>safety</span>') < html.indexOf('<span>math</span>'));
   assert.match(html, /tone-low" style="width:0%"/);
@@ -101,7 +105,9 @@ test('job list shows run outcomes, queue count and only recorded owner metadata'
 });
 
 test('zero eligible cases are not measured and markdown failure cannot hide metrics or CSV', () => {
-  const html = renderDetail({ ...report, repeated_case_count: 0, schema_case_count: 0, latency_sources: {} }, { report: 'Report unavailable' });
+  const html = renderDetail({ ...report, repeated_case_count: 0, schema_case_count: 0, latency_sources: {},
+    repeat_k: null, pass_at_k: null, pass_hat_k: null }, { report: 'Report unavailable' });
+  assert.match(html, /pass\^k<\/div><div class="kpi-value">N\/A<\/div><div class="kpi-sub">needs 2\+ attempts per case/);
   assert.match(html, /not measured \(no repeated cases\)/);
   assert.match(html, /not measured \(no schema cases\)/);
   assert.match(html, /Latency sources: not reported/);
@@ -265,19 +271,19 @@ test('blank numeric input stays invalid rather than becoming zero', () => {
   harness.cleanup();
 });
 
-test('global queue reports per-job failures even on an HTTP success', async () => {
+test('queue button reports how many queued jobs were started in the background', async () => {
   const harness = hookHarness();
-  const completed = deferred();
+  const scheduled = deferred();
   const { default: Page } = loadSource('../app/jobs/page.tsx', {
     react: harness.hooks, 'next/link': { default: () => null },
-    '@/lib/api': { processQueue: () => completed.promise },
+    '@/lib/api': { processQueue: () => scheduled.promise },
     '@/lib/useRemoteResource': { useRemoteResource: () => ({ data: null, error: '', loading: false }) }
   });
   const render = () => harness.render(Page);
   const tree = render(); harness.flush();
   elements(tree).find(element => element.type === 'button' && textOf(element).startsWith('Run queued')).props.onClick();
-  completed.resolve({ processed_count: 2, results: [{}], failures: [{ job_id: 'broken-job', error: 'Provider unavailable' }] });
-  await completed.promise;
-  assert.match(textOf(render()), /broken-job.*Provider unavailable/);
+  scheduled.resolve({ requested_max_jobs: 10, scheduled_count: 2, job_ids: ['a', 'b'] });
+  await scheduled.promise;
+  assert.match(textOf(render()), /Started 2 queued jobs; they run one at a time/);
   harness.cleanup();
 });

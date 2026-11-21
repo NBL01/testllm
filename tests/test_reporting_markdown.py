@@ -26,7 +26,9 @@ def test_generate_run_markdown_report_includes_required_sections(monkeypatch, tm
     assert "## Error Type Breakdown" in markdown_report
     assert "## Latency Summary" in markdown_report
     assert "## Consistency Summary" in markdown_report
-    assert "## Overall Reliability Score" in markdown_report
+    assert "## Legacy Composite Score" in markdown_report
+    assert "| pass^k: cases passing all attempts | " in markdown_report
+    assert "(k=2)" in markdown_report
     assert "## Conclusions" in markdown_report
     assert "Total Test Cases" in markdown_report
     assert "Passed" in markdown_report

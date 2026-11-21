@@ -55,9 +55,12 @@ class BaseLLMClient(ABC):
         return LLMGeneration(text=self.generate(prompt), latency_ms=None)
 
 
-def resolve_execution_mode(provider: str, mode: str) -> Literal["mock", "real_local"]:
+def resolve_execution_mode(provider: str, mode: str) -> Literal["mock", "real_local", "real_api"]:
     normalized_provider = provider.strip().lower()
     normalized_mode = mode.strip().lower()
+
+    if normalized_provider == "openai_compatible":
+        return "real_api"
 
     if normalized_provider in {"ollama", "local"}:
         return "real_local"

@@ -46,7 +46,7 @@ def main() -> None:
     iterations = iterations if poll_seconds > 0 else 1
     for index in range(iterations):
         try:
-            result = _request(args, "POST", "/evaluation-jobs/process-queue", params={"max_jobs": max_jobs})
+            result = _request(args, "POST", "/evaluation-jobs/process-queue", params={"max_jobs": max_jobs, "wait": True})
             stats = _request(args, "GET", "/evaluation-jobs/queue/stats")
             if poll_seconds <= 0:
                 print(f"processed_count={result['processed_count']} "

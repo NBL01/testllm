@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from llm_reliability_analytics.models.domain import EvaluationMode, OracleType
 from llm_reliability_analytics.runner.llm_client import OPTIONAL_OLLAMA_MODELS, RECOMMENDED_OLLAMA_MODELS
+from llm_reliability_analytics.runner.openai_compatible_client import configured_base_url
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
@@ -30,15 +31,17 @@ class EvaluationJobOptionsResponse(BaseModel):
     oracle_profiles: list[str]
     oracle_types: list[str]
     evaluation_modes: list[str]
+    openai_compatible_base_url: str
 
 
 def get_evaluation_job_options() -> EvaluationJobOptionsResponse:
-    providers = ["mock", "ollama", "local"]
+    providers = ["mock", "ollama", "local", "openai_compatible"]
     ollama_models = _dedupe_ordered([*RECOMMENDED_OLLAMA_MODELS, *OPTIONAL_OLLAMA_MODELS])
     models_by_provider = {
         "mock": ["mock-baseline", "mock-noisy", "mock-failing"],
         "ollama": ollama_models,
         "local": ollama_models,
+        "openai_compatible": [],  # Free-text model names; the configured endpoint decides what exists.
     }
     dataset_paths = _discover_dataset_paths()
     dataset_versions = _discover_dataset_versions(dataset_paths)
@@ -76,6 +79,7 @@ def get_evaluation_job_options() -> EvaluationJobOptionsResponse:
         oracle_profiles=oracle_profiles,
         oracle_types=oracle_types,
         evaluation_modes=evaluation_modes,
+        openai_compatible_base_url=configured_base_url(),
     )
 
 

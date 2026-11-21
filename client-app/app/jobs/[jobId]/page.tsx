@@ -216,11 +216,17 @@ function JobDetail({ jobId }: { jobId: string }) {
           <PanelError label="Summary" error={summaryResource.error} />
           {summary ? <>
             <div className="kpi-grid">
-              <Kpi label="Accuracy" value={`${asNumber(summary.report.accuracy * 100, 1)}%`} sub={`${summary.report.passed} of ${summary.report.total_test_cases} attempts passed`} />
-              <Kpi label="Reliability heuristic" value={asNumber(summary.report.overall_reliability_score)} sub={`${summary.report.metric_version ?? "unversioned"} composite`} />
+              <Kpi label="Pass rate" value={`${asNumber(summary.report.accuracy * 100, 1)}%`} sub={`${summary.report.passed} of ${summary.report.total_test_cases} attempts`} />
+              <Kpi label={summary.report.repeat_k ? `pass^${summary.report.repeat_k}` : "pass^k"}
+                value={summary.report.pass_hat_k == null ? "N/A" : formatPercent(summary.report.pass_hat_k, 1)}
+                sub={summary.report.pass_hat_k == null ? "needs 2+ attempts per case" : "cases passing every attempt"} />
+              <Kpi label={summary.report.repeat_k ? `pass@${summary.report.repeat_k}` : "pass@k"}
+                value={summary.report.pass_at_k == null ? "N/A" : formatPercent(summary.report.pass_at_k, 1)}
+                sub={summary.report.pass_at_k == null ? "needs 2+ attempts per case" : "cases passing at least once"} />
+              {summary.report.schema_pass_rate != null && <Kpi label="Schema pass rate" value={formatPercent(summary.report.schema_pass_rate, 1)} sub={`${summary.report.schema_attempt_count ?? 0} json_schema attempts`} />}
               <Kpi label="Unique cases" value={summary.report.unique_test_cases ?? "Not reported"} sub={`${summary.report.total_test_cases} attempts`} />
-              <Kpi label="Failed attempts" value={summary.report.failed} sub={`of ${summary.report.total_test_cases}`} />
-              <Kpi label="Avg latency" value={`${asNumber(summary.report.average_latency_ms, 1)} ms`} sub={summary.report.p95_latency_ms == null ? undefined : `p95 ${asNumber(summary.report.p95_latency_ms, 1)} ms`} />
+              <Kpi label="Latency p50 / p95" value={`${asNumber(summary.report.p50_latency_ms, 0)} / ${asNumber(summary.report.p95_latency_ms, 0)} ms`}
+                sub={job.provider === "mock" ? "simulated (mock)" : `mean ${asNumber(summary.report.average_latency_ms, 0)} ms`} />
             </div>
             {!!summary.report.category_reports?.length && <>
               <h3 className="section-title">Accuracy by category</h3>
@@ -236,7 +242,8 @@ function JobDetail({ jobId }: { jobId: string }) {
             </>}
             <details className="notes">
               <summary>How these metrics are computed</summary>
-              <p className="meta">Metric version: <code>{summary.report.metric_version ?? "Not reported; eligibility is unknown"}</code>. A heuristic score is not a guarantee of reliability.</p>
+              <p className="meta">pass^k counts cases whose every one of k attempts passed (production consistency); pass@k counts cases with at least one pass (capability ceiling). Both are N/A unless every case has the same k of 2 or more attempts.</p>
+              <p className="meta">Legacy composite ({summary.report.metric_version ?? "unversioned"}): <code>{asNumber(summary.report.overall_reliability_score)}</code>. Kept for comparison with older runs; it blends weighted heuristics and is not a guarantee of reliability.</p>
               <p className="meta">Repeatability: {summary.report.repeated_case_count == null ? "eligibility not reported" : summary.report.repeated_case_count === 0 ? "not measured (no repeated cases)" : `${summary.report.repeated_case_count} repeated cases eligible`}.</p>
               <p className="meta">Schema compliance: {summary.report.schema_case_count == null ? "eligibility not reported" : summary.report.schema_case_count === 0 ? "not measured (no schema cases)" : `${summary.report.schema_case_count} schema cases eligible`}.</p>
               <p className="meta">Latency sources: {Object.entries(summary.report.latency_sources ?? {}).map(([source, count]) => `${source}: ${count}`).join(", ") || "not reported"}. Counts are attempts. {job.provider === "mock" && "Mock latency is synthetic, not real model performance."}</p>

@@ -9,6 +9,7 @@ from llm_reliability_analytics.runner.llm_client import (
 )
 from llm_reliability_analytics.runner.mock_client import MockLLMClient
 from llm_reliability_analytics.runner.ollama_client import OllamaLLMClient
+from llm_reliability_analytics.runner.openai_compatible_client import OpenAICompatibleClient
 
 MockMode = Literal["deterministic", "semi_random"]
 
@@ -25,6 +26,17 @@ def build_llm_client(
     failure_rate: float = 0.0,
 ) -> BaseLLMClient:
     execution_mode = resolve_execution_mode(provider=provider, mode=run_mode)
+
+    if execution_mode == "real_api":
+        stripped_model = (model_name or "").strip()
+        if not stripped_model:
+            raise ValueError("An OpenAI-compatible model name is required.")
+        return OpenAICompatibleClient(
+            model_name=stripped_model,
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            timeout_seconds=timeout_seconds,
+        )
 
     if execution_mode == "real_local":
         resolved_model = (model_name or "").strip() or DEFAULT_LOCAL_MODEL

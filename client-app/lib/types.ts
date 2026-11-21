@@ -41,22 +41,10 @@ export type EvaluationJobListResponse = {
   items: EvaluationJob[];
 };
 
-export type JobRunResult = {
-  job: EvaluationJob;
-  result: {
-    run_id: string;
-    loaded_test_cases: number;
-    executed_test_cases: number;
-    report: Record<string, unknown>;
-    storage_summary: Record<string, unknown>;
-  };
-};
-
-export type QueueProcessResult = {
+export type QueueScheduleResult = {
   requested_max_jobs: number;
-  processed_count: number;
-  results: JobRunResult[];
-  failures?: { job_id: string; error?: string; failure_reason?: string; detail?: string }[];
+  scheduled_count: number;
+  job_ids: string[];
 };
 
 export type QueueStatsResult = {
@@ -88,6 +76,12 @@ export type JobSummaryResult = {
     latency_sources?: Record<string, number>;
     unique_test_cases?: number;
     p95_latency_ms?: number;
+    p50_latency_ms?: number;
+    repeat_k?: number | null;
+    pass_at_k?: number | null;
+    pass_hat_k?: number | null;
+    schema_pass_rate?: number | null;
+    schema_attempt_count?: number;
     category_reports?: { category: string; total_test_cases: number; passed: number; failed: number; accuracy: number }[];
     error_distribution?: Record<string, number>;
   };
@@ -179,6 +173,7 @@ export type JobOptionsResponse = {
   oracle_profiles: string[];
   oracle_types: string[];
   evaluation_modes: string[];
+  openai_compatible_base_url?: string;
 };
 
 export type HealthResponse = {

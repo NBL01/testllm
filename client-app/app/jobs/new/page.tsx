@@ -7,7 +7,8 @@ import { API_BASE_URL, ApiClientError } from "@/lib/apiClient";
 import type { JobOptionsResponse, ModelsResponse } from "@/lib/types";
 import { validateJobNumbers } from "@/lib/jobForm";
 
-type Provider = "mock" | "ollama" | "local";
+type Provider = "mock" | "ollama" | "local" | "openai_compatible";
+const PROVIDER_LABELS: Record<string, string> = { openai_compatible: "OpenAI-compatible API" };
 type EvaluationMode = "regression" | "exploratory" | "adversarial" | "trace_replay";
 
 type JobFormState = {
@@ -150,6 +151,9 @@ export default function NewJobPage() {
     ]);
   }, [modelsSnapshot?.available_models, options?.models_by_provider, state.provider]);
 
+  // OpenAI-compatible endpoints serve arbitrary model names; local Ollama names are only suggestions.
+  const freeTextModel = state.provider === "openai_compatible";
+
   const selectedModelMayBeMissing = useMemo(() => {
     if (state.provider !== "ollama" && state.provider !== "local") return false;
     if (!statusPanel.modelsEndpointAvailable || !modelsSnapshot) return false;
@@ -165,7 +169,7 @@ export default function NewJobPage() {
     if (!effectiveDataset?.input_path.trim()) errors.push("Select a backend dataset or enter an explicit custom dataset path.");
     if (effectiveDataset?.input_path && !/\.(jsonl|csv)$/i.test(effectiveDataset.input_path)) errors.push("Dataset path must name a JSONL or CSV file on the backend.");
     if (options && !options.providers.includes(state.provider)) errors.push("Select a supported provider.");
-    if (!modelChoices.includes(state.model_name)) errors.push("Select a model from the backend catalog.");
+    if (!freeTextModel && !modelChoices.includes(state.model_name)) errors.push("Select a model from the backend catalog.");
     return errors;
   })();
 
@@ -244,7 +248,8 @@ export default function NewJobPage() {
   useEffect(() => {
     setState((prev) => {
       const providerModels = modelChoices;
-      const modelName = providerModels.includes(prev.model_name) ? prev.model_name : (providerModels[0] || "");
+      const modelName = prev.provider === "openai_compatible" ? (prev.model_name.startsWith("mock-") ? "" : prev.model_name)
+        : providerModels.includes(prev.model_name) ? prev.model_name : (providerModels[0] || "");
       return { ...prev, model_name: modelName };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,14 +358,18 @@ export default function NewJobPage() {
               >
                 {(options?.providers || ["mock", "ollama", "local"]).map((provider) => (
                   <option key={provider} value={provider}>
-                    {provider}
+                    {PROVIDER_LABELS[provider] ?? provider}
                   </option>
                 ))}
               </select>
             </label>
             <label>
               Model name
-              <select
+              {freeTextModel ? <>
+                <input className="input" list="model-suggestions" placeholder="e.g. llama3.2:1b or gpt-4o-mini" value={state.model_name}
+                  onChange={(event) => setState((prev) => ({ ...prev, model_name: event.target.value }))} />
+                <datalist id="model-suggestions">{modelChoices.map(model => <option key={model} value={model} />)}</datalist>
+              </> : <select
                 value={state.model_name}
                 onChange={(event) => setState((prev) => ({ ...prev, model_name: event.target.value }))}
               >
@@ -369,7 +378,7 @@ export default function NewJobPage() {
                     {model}
                   </option>
                 ))}
-              </select>
+              </select>}
             </label>
             <label>
               Evaluation mode
@@ -393,6 +402,10 @@ export default function NewJobPage() {
               </select>
             </label>
           </div>
+          {freeTextModel && <p className="meta">
+            Requests go to <code>{options?.openai_compatible_base_url ?? "the server's configured endpoint"}</code>, set on the server
+            with <code>LLM_RELIABILITY_OPENAI_BASE_URL</code> and an optional <code>LLM_RELIABILITY_OPENAI_API_KEY</code>. The key never reaches the browser.
+          </p>}
           {selectedModelMayBeMissing && (
             <p className="error" role="alert">
               Selected Ollama model may not be installed locally. Install with <code>ollama pull {state.model_name}</code>.

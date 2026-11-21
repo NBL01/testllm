@@ -5,7 +5,7 @@ import Link from "next/link";
 import { getQueueStats, listJobs, processQueue } from "@/lib/api";
 import { useRemoteResource } from "@/lib/useRemoteResource";
 import { formatDate, formatPercent, rateTone } from "@/lib/format";
-import type { QueueProcessResult } from "@/lib/types";
+import type { QueueScheduleResult } from "@/lib/types";
 
 const STATUSES = ["draft", "queued", "running", "completed", "failed", "canceled"] as const;
 const SORTS = { "created_at:desc": "Newest first", "created_at:asc": "Oldest first", "updated_at:desc": "Recently updated" };
@@ -27,7 +27,7 @@ export default function JobsPage() {
   const [jobsOffset, setJobsOffset] = useState(0);
   const [error, setError] = useState<string>("");
   const [processing, setProcessing] = useState(false);
-  const [queueOutcome, setQueueOutcome] = useState<QueueProcessResult | null>(null);
+  const [queueOutcome, setQueueOutcome] = useState<QueueScheduleResult | null>(null);
   const processLock = useRef(false);
   const mounted = useRef(true);
   const [refresh, setRefresh] = useState(0);
@@ -86,7 +86,7 @@ export default function JobsPage() {
             Refresh
           </button>
           <button className="btn btn-secondary" onClick={() => void handleProcessQueue()} disabled={processing || (!!queueStats && queued === 0)} type="button">
-            {processing ? "Running queued jobs..." : `Run queued jobs (${queued})`}
+            {processing ? "Starting queued jobs..." : `Run queued jobs (${queued})`}
           </button>
           <Link className="btn btn-primary" href="/jobs/new">
             New Job
@@ -95,13 +95,10 @@ export default function JobsPage() {
       </section>
 
       <section className="panel">
-        {queueOutcome && <div role="status">
-          <p className="meta">Queue processing finished: {queueOutcome.processed_count} attempted, {queueOutcome.results.length} succeeded,
-            {" "}{queueOutcome.failures?.length || 0} failed.</p>
-          {!!queueOutcome.failures?.length && <ul className="error">{queueOutcome.failures.map((failure, index) => <li key={`${failure.job_id}:${index}`}>
-            <Link href={`/jobs/${failure.job_id}`}><u>{failure.job_id}</u></Link>: {failure.error || failure.failure_reason || failure.detail || "Evaluation failed"}
-          </li>)}</ul>}
-        </div>}
+        {queueOutcome && <p className="meta" role="status">
+          {queueOutcome.scheduled_count ? `Started ${queueOutcome.scheduled_count} queued job${queueOutcome.scheduled_count === 1 ? "" : "s"}; they run one at a time and this list updates as each finishes.`
+            : "No queued jobs to run."}
+        </p>}
         <div className="chips" role="group" aria-label="Filter by status">
           {(["all", ...STATUSES] as const).map(status => (
             <button key={status} className="chip" aria-pressed={statusFilter === status} type="button"

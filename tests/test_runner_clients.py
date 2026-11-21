@@ -11,6 +11,7 @@ from llm_reliability_analytics.runner.llm_client import (
 )
 from llm_reliability_analytics.runner.mock_client import MockLLMClient
 from llm_reliability_analytics.runner.ollama_client import OllamaLLMClient
+from llm_reliability_analytics.runner.openai_compatible_client import OpenAICompatibleClient
 
 
 def test_resolve_execution_mode_prefers_real_local_when_provider_is_ollama() -> None:
@@ -100,3 +101,213 @@ def test_malformed_ollama_generation_is_a_typed_error(monkeypatch, payload):
     monkeypatch.setattr("llm_reliability_analytics.runner.ollama_client.httpx.Client", StubClient)
     with pytest.raises(LLMRequestError):
         OllamaLLMClient(model_name="demo").generate("Hello")
+
+
+def test_openai_compatible_client_sends_chat_request_and_bearer_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_RELIABILITY_OPENAI_BASE_URL", "http://example.invalid/v1/")
+    monkeypatch.setenv("LLM_RELIABILITY_OPENAI_API_KEY", "sk-test")
+
+    recorded: dict[str, object] = {}
+
+    class StubResponse:
+        status_code = 200
+        text = '{"choices":[{"message":{"content":"  Paris "},"finish_reason":"stop"}],"usage":{"total_tokens":3}}'
+
+        def json(self) -> object:
+            return {
+                "choices": [{"message": {"content": "  Paris "}, "finish_reason": "stop"}],
+                "usage": {"total_tokens": 3},
+            }
+
+    class StubClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "StubClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def post(
+            self,
+            url: str,
+            json: dict[str, object] | None = None,
+            headers: dict[str, str] | None = None,
+            **kwargs: object,
+        ) -> StubResponse:
+            recorded["url"] = url
+            recorded["json"] = json
+            recorded["headers"] = headers
+            return StubResponse()
+
+    monkeypatch.setattr(
+        "llm_reliability_analytics.runner.openai_compatible_client.httpx.Client",
+        StubClient,
+    )
+
+    client = OpenAICompatibleClient(model_name="test-model", max_output_tokens=64)
+    text = client.generate("Q")
+
+    assert text == "Paris"
+    assert recorded["url"] == "http://example.invalid/v1/chat/completions"
+    assert recorded["json"]["messages"] == [{"role": "user", "content": "Q"}]
+    assert recorded["json"]["max_tokens"] == 64
+    assert recorded["headers"]["Authorization"] == "Bearer sk-test"
+    assert "sk-test" not in repr(client)
+
+
+def test_openai_compatible_client_omits_auth_without_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LLM_RELIABILITY_OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("LLM_RELIABILITY_OPENAI_BASE_URL", raising=False)
+
+    recorded: dict[str, object] = {}
+
+    class StubResponse:
+        status_code = 200
+        text = '{"choices":[{"message":{"content":"ok"}}]}'
+
+        def json(self) -> object:
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class StubClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "StubClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def post(
+            self,
+            url: str,
+            json: dict[str, object] | None = None,
+            headers: dict[str, str] | None = None,
+            **kwargs: object,
+        ) -> StubResponse:
+            recorded["url"] = url
+            recorded["headers"] = headers
+            return StubResponse()
+
+    monkeypatch.setattr(
+        "llm_reliability_analytics.runner.openai_compatible_client.httpx.Client",
+        StubClient,
+    )
+
+    client = OpenAICompatibleClient(model_name="demo")
+    assert client.base_url == "http://127.0.0.1:11434/v1"
+
+    client.generate("hello")
+    recorded_headers = recorded.get("headers") or {}
+    assert "Authorization" not in recorded_headers
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"choices": []},
+        {"choices": [{"message": {"content": 5}}]},
+        [1],
+        {"choices": [{"message": {"content": "   "}}]},
+    ],
+)
+def test_openai_compatible_client_malformed_payloads_raise_request_error(
+    monkeypatch: pytest.MonkeyPatch, payload: object
+) -> None:
+    class StubResponse:
+        status_code = 200
+        text = jsonlib.dumps(payload)
+
+        def json(self) -> object:
+            return payload
+
+    class StubClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "StubClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def post(self, *args: object, **kwargs: object) -> StubResponse:
+            return StubResponse()
+
+    monkeypatch.setattr(
+        "llm_reliability_analytics.runner.openai_compatible_client.httpx.Client",
+        StubClient,
+    )
+
+    client = OpenAICompatibleClient(model_name="demo")
+    with pytest.raises(LLMRequestError):
+        client.generate("Hello")
+
+
+def test_openai_compatible_client_credential_and_missing_model_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_RELIABILITY_OPENAI_API_KEY", "sk-secret")
+
+    status_holder = {"code": 401}
+
+    class StubResponse:
+        @property
+        def status_code(self) -> int:
+            return status_holder["code"]
+
+        @property
+        def text(self) -> str:
+            return "Unauthorized" if self.status_code == 401 else "Not Found"
+
+        def json(self) -> object:
+            return {"error": self.text}
+
+    class StubClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> "StubClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            pass
+
+        def post(self, *args: object, **kwargs: object) -> StubResponse:
+            return StubResponse()
+
+    monkeypatch.setattr(
+        "llm_reliability_analytics.runner.openai_compatible_client.httpx.Client",
+        StubClient,
+    )
+
+    client = OpenAICompatibleClient(model_name="demo")
+
+    with pytest.raises(LLMRequestError) as exc_info:
+        client.generate("Hello")
+    error_message = str(exc_info.value)
+    assert "LLM_RELIABILITY_OPENAI_API_KEY" in error_message
+    assert "sk-secret" not in error_message
+
+    status_holder["code"] = 404
+    with pytest.raises(LLMModelNotFoundError):
+        client.generate("Hello")
+
+
+def test_resolve_execution_mode_and_client_factory_for_openai_compatible() -> None:
+    assert resolve_execution_mode("openai_compatible", "mock") == "real_api"
+
+    client = build_llm_client(provider="openai_compatible", run_mode="real_api", model_name="m")
+    assert isinstance(client, OpenAICompatibleClient)
+    assert client.model_name == "m"
+
+    with pytest.raises(ValueError, match="An OpenAI-compatible model name is required."):
+        build_llm_client(provider="openai_compatible", run_mode="real_api", model_name="  ")
+

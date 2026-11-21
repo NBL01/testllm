@@ -6,10 +6,9 @@ import type {
   HealthResponse,
   JobOptionsResponse,
   JobReportPayload,
-  JobRunResult,
   JobSummaryResult,
   ModelsResponse,
-  QueueProcessResult,
+  QueueScheduleResult,
   QueueStatsResult,
   TracesResponse
 } from "./types";
@@ -75,8 +74,9 @@ export function getJob(jobId: string): Promise<EvaluationJob> {
   return requestJson<EvaluationJob>(`/evaluation-jobs/${jobId}`);
 }
 
-export function runJob(jobId: string): Promise<JobRunResult> {
-  return requestJson<JobRunResult>(`/evaluation-jobs/${jobId}/run`, { method: "POST" });
+/** Schedules execution and returns at once (HTTP 202); poll the job for progress. */
+export function runJob(jobId: string): Promise<EvaluationJob> {
+  return requestJson<EvaluationJob>(`/evaluation-jobs/${jobId}/run`, { method: "POST" });
 }
 
 export function queueJob(jobId: string): Promise<EvaluationJob> {
@@ -90,8 +90,8 @@ export function cancelJob(jobId: string, reason = ""): Promise<EvaluationJob> {
   });
 }
 
-export function processQueue(maxJobs = 10): Promise<QueueProcessResult> {
-  return requestJson<QueueProcessResult>(`/evaluation-jobs/process-queue?max_jobs=${maxJobs}`, {
+export function processQueue(maxJobs = 10): Promise<QueueScheduleResult> {
+  return requestJson<QueueScheduleResult>(`/evaluation-jobs/process-queue?max_jobs=${maxJobs}`, {
     method: "POST"
   });
 }

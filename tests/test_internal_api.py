@@ -136,7 +136,7 @@ def test_queue_cli_is_http_only(monkeypatch, capsys):
     process_queue.main()
     assert [call[0] for call in calls] == ["POST", "GET", "POST", "GET"]
     assert calls[0][1].endswith("/evaluation-jobs/process-queue")
-    assert calls[0][2]["params"] == {"max_jobs": 4}
+    assert calls[0][2]["params"] == {"max_jobs": 4, "wait": True}
     assert "iteration=2/2 processed_count=2 queue_total=5 queued=3" in capsys.readouterr().out
 
 

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib
 import json
+import logging
 import re
 from uuid import uuid4
 from typing import Any, Literal, cast
@@ -49,6 +51,20 @@ class EvaluationJobQueueProcessResult(BaseModel):
     processed_count: int
     results: list[EvaluationJobRunResult]
     failures: list[dict[str, str]] = []
+
+
+class EvaluationJobQueueScheduleResult(BaseModel):
+    requested_max_jobs: int
+    scheduled_count: int
+    job_ids: list[str]
+
+
+logger = logging.getLogger(__name__)
+# One worker serializes executions for DuckDB's single writer. Waiting jobs stay `queued`
+# in the database, so a restart loses only the in-flight run (recovered as failed).
+# Ponytail: in-process, one process only; move to a durable external worker if runs must
+# survive restarts mid-execution or execute in parallel.
+_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation-worker")
 
 
 class EvaluationJobQueueStatsResult(BaseModel):
@@ -157,7 +173,7 @@ def duplicate_job(job_id: str) -> EvaluationJob:
     source = get_job(job_id)
     payload = EvaluationJobCreate(
         input_path=source.input_path,
-        provider=cast(Literal["mock", "ollama", "local"], source.provider),
+        provider=cast(Literal["mock", "ollama", "local", "openai_compatible"], source.provider),
         model_name=source.model_name,
         dataset_version=source.dataset_version,
         evaluation_mode=cast(
@@ -260,10 +276,10 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
             raise EvaluationJobConflictError("Job was already claimed or canceled. Reload its status.")
         execution_run = create_test_run(
             name=job.project_name.strip() or f"evaluation-job-{job_id[:8]}", model_name=job.model_name,
-            provider="ollama" if job.provider in {"ollama", "local"} else "mock",
+            provider=_execution_target(job.provider)[0],
             dataset_version=job.dataset_version or "v1", evaluation_mode=job.evaluation_mode,
             temperature=job.temperature, max_output_tokens=job.max_output_tokens,
-            repeat_count=job.repeat_count, mode="real_local" if job.provider in {"ollama", "local"} else "mock",
+            repeat_count=job.repeat_count, mode=_execution_target(job.provider)[1],
             notes=job.notes, run_group_id=f"evaluation-job:{job_id}", repetition_index=1,
             metadata={"job_id": job_id, "dataset_sha256": job.dataset_sha256,
                       "configuration": {**job.model_dump(mode="json", exclude={"dataset_snapshot"}), "seed": seed},
@@ -301,7 +317,7 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
             temperature=refreshed.temperature,
             max_output_tokens=refreshed.max_output_tokens,
             timeout_seconds=refreshed.timeout_seconds,
-            run_mode="real_local" if refreshed.provider in {"ollama", "local"} else "mock",
+            run_mode=_execution_target(refreshed.provider)[1],
             notes=refreshed.notes,
             run_group_id=run_group_id,
             limit=refreshed.limit,
@@ -332,6 +348,44 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
         raise EvaluationJobNotFoundError(f"Evaluation job not found after completion update: {job_id}")
 
     return EvaluationJobRunResult(job=completed, result=result)
+
+
+def _execution_target(provider: str) -> tuple[str, Literal["mock", "real_local", "real_api"]]:
+    """Stored run provider and execution mode for a job provider."""
+    if provider in {"ollama", "local"}:
+        return "ollama", "real_local"
+    if provider == "openai_compatible":
+        return "openai_compatible", "real_api"
+    return "mock", "mock"
+
+
+def _run_in_background(job_id: str) -> None:
+    try:
+        run_job(job_id)
+    except EvaluationJobConflictError:
+        pass  # Canceled, or claimed by another request, while waiting for the worker.
+    except Exception:  # noqa: BLE001 - run_job persists the failure; keep the worker alive
+        logger.exception("Background evaluation failed for job %s", job_id)
+
+
+def start_job(job_id: str) -> EvaluationJob:
+    """Queue a draft (a queued job stays queued) and schedule it; returns before execution."""
+    job = get_job(job_id)
+    if job.status in {"draft", "queued"} and not job.linked_run_id and not job.dataset_snapshot:
+        raise ValueError("Legacy job has no dataset snapshot. Duplicate it to validate current inputs.")
+    queued = queue_job(job_id)
+    _worker.submit(_run_in_background, job_id)
+    return queued
+
+
+def schedule_queued_jobs(max_jobs: int = 10) -> EvaluationJobQueueScheduleResult:
+    """Schedule the oldest queued jobs on the worker; already-scheduled ones lose the claim and skip."""
+    effective_max = max(1, int(max_jobs))
+    queued_jobs = list_evaluation_jobs(limit=effective_max, status="queued", sort_by="queued_at", sort_order="asc")
+    for job in queued_jobs:
+        _worker.submit(_run_in_background, job.job_id)
+    return EvaluationJobQueueScheduleResult(
+        requested_max_jobs=effective_max, scheduled_count=len(queued_jobs), job_ids=[job.job_id for job in queued_jobs])
 
 
 def queue_job(job_id: str) -> EvaluationJob:
@@ -536,12 +590,12 @@ def _validate_job_create_payload(payload: EvaluationJobCreate) -> None:
             raise ValueError("Dataset must be a JSONL or CSV file.")
         if payload.provider == "mock" and payload.model_name not in {"mock-baseline", "mock-noisy", "mock-failing"}:
             raise ValueError("Unsupported mock model.")
-        if payload.provider in {"ollama", "local"} and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", payload.model_name):
+        if payload.provider in {"ollama", "local", "openai_compatible"} and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", payload.model_name):
             raise ValueError("Invalid Ollama model identifier; use a model tag such as llama3.2:1b.")
     except FileNotFoundError as exc:
         raise ValueError(str(exc)) from exc
 
-    if payload.provider in {"ollama", "local"} and not payload.model_name.strip():
+    if payload.provider in {"ollama", "local", "openai_compatible"} and not payload.model_name.strip():
         raise ValueError(f"model_name is required when provider={payload.provider}")
 
 

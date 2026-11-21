@@ -69,7 +69,7 @@ def test_evaluation_job_run_links_test_run(monkeypatch, tmp_path) -> None:
     assert create_response.status_code == 201
     job_id = create_response.json()["job_id"]
 
-    run_response = client.post(f"/evaluation-jobs/{job_id}/run")
+    run_response = client.post(f"/evaluation-jobs/{job_id}/run?wait=true")
     assert run_response.status_code == 200
     run_payload = run_response.json()
     assert run_payload["job"]["job_id"] == job_id
@@ -88,7 +88,7 @@ def test_evaluation_job_run_links_test_run(monkeypatch, tmp_path) -> None:
     assert get_payload["started_at"] is not None
     assert get_payload["completed_at"] is not None
 
-    rerun_response = client.post(f"/evaluation-jobs/{job_id}/run")
+    rerun_response = client.post(f"/evaluation-jobs/{job_id}/run?wait=true")
     assert rerun_response.status_code == 409
     assert "cannot run from status=completed" in rerun_response.json()["detail"]
 
@@ -157,7 +157,7 @@ def test_evaluation_job_queue_and_process(monkeypatch, tmp_path) -> None:
     queue_payload = queue_response.json()
     assert queue_payload["status"] == "queued"
 
-    process_response = client.post("/evaluation-jobs/process-queue?max_jobs=5")
+    process_response = client.post("/evaluation-jobs/process-queue?wait=true&max_jobs=5")
     assert process_response.status_code == 200
     process_payload = process_response.json()
     assert process_payload["processed_count"] == 1
@@ -203,7 +203,7 @@ def test_evaluation_job_queue_processing_is_fifo(monkeypatch, tmp_path) -> None:
         assert queue_response.status_code == 200
         time.sleep(0.01)
 
-    process_response = client.post("/evaluation-jobs/process-queue?max_jobs=2")
+    process_response = client.post("/evaluation-jobs/process-queue?wait=true&max_jobs=2")
     assert process_response.status_code == 200
     payload = process_response.json()
     assert payload["processed_count"] == 2
@@ -222,7 +222,7 @@ def test_evaluation_job_queue_stats_and_empty_processor(monkeypatch, tmp_path) -
     monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
     client = TestClient(app)
 
-    empty_process_response = client.post("/evaluation-jobs/process-queue?max_jobs=3")
+    empty_process_response = client.post("/evaluation-jobs/process-queue?wait=true&max_jobs=3")
     assert empty_process_response.status_code == 200
     empty_process_payload = empty_process_response.json()
     assert empty_process_payload["requested_max_jobs"] == 3
@@ -262,7 +262,7 @@ def test_evaluation_job_queue_stats_and_empty_processor(monkeypatch, tmp_path) -
     assert queue_stats_payload["by_status"]["draft"] == 0
     assert queue_stats_payload["by_status"]["queued"] == 1
 
-    process_response = client.post("/evaluation-jobs/process-queue?max_jobs=1")
+    process_response = client.post("/evaluation-jobs/process-queue?wait=true&max_jobs=1")
     assert process_response.status_code == 200
     assert process_response.json()["processed_count"] == 1
 
@@ -308,7 +308,7 @@ def test_evaluation_job_cancel_from_draft_and_queue_blocked(monkeypatch, tmp_pat
     assert queue_response.status_code == 409
     assert "cannot be queued" in queue_response.json()["detail"]
 
-    process_response = client.post("/evaluation-jobs/process-queue?max_jobs=5")
+    process_response = client.post("/evaluation-jobs/process-queue?wait=true&max_jobs=5")
     assert process_response.status_code == 200
     process_payload = process_response.json()
     assert process_payload["processed_count"] == 0
@@ -470,7 +470,7 @@ def test_evaluation_job_retry_creates_new_queued_job(monkeypatch, tmp_path) -> N
     assert create_response.status_code == 201
     source_job = create_response.json()
 
-    run_response = client.post(f"/evaluation-jobs/{source_job['job_id']}/run")
+    run_response = client.post(f"/evaluation-jobs/{source_job['job_id']}/run?wait=true")
     assert run_response.status_code == 200
 
     retry_response = client.post(
@@ -506,7 +506,7 @@ def test_evaluation_job_traces_can_filter_by_test_case_id(monkeypatch, tmp_path)
     assert create_response.status_code == 201
     job_id = create_response.json()["job_id"]
 
-    run_response = client.post(f"/evaluation-jobs/{job_id}/run")
+    run_response = client.post(f"/evaluation-jobs/{job_id}/run?wait=true")
     assert run_response.status_code == 200
 
     unfiltered_response = client.get(f"/evaluation-jobs/{job_id}/traces?limit=100&only_failed=false")
@@ -595,7 +595,7 @@ def test_evaluation_job_list_reports_attempt_outcomes(monkeypatch, tmp_path) -> 
     job_id_2 = create_response_2.json()["job_id"]
     assert create_response_2.json()["status"] == "draft"
 
-    run_response = client.post(f"/evaluation-jobs/{job_id_1}/run")
+    run_response = client.post(f"/evaluation-jobs/{job_id_1}/run?wait=true")
     assert run_response.status_code == 200
 
     list_response = client.get("/evaluation-jobs")
@@ -610,3 +610,41 @@ def test_evaluation_job_list_reports_attempt_outcomes(monkeypatch, tmp_path) -> 
     assert 0 <= run_item["passed_attempts"] <= 6
     assert draft_item["attempts"] is None
     assert draft_item["passed_attempts"] is None
+
+
+def _wait_for_status(client: TestClient, job_id: str, statuses: set[str], timeout: float = 60.0) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        job = client.get(f"/evaluation-jobs/{job_id}").json()
+        if job["status"] in statuses:
+            return job
+        time.sleep(0.05)
+    raise AssertionError(f"job {job_id} did not reach {statuses}")
+
+
+def test_run_and_queue_processing_return_202_and_execute_in_background(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "async_jobs.duckdb"))
+    client = TestClient(app)
+    payload = {"input_path": "sample_test_cases.jsonl", "model_name": "mock-baseline", "limit": 3}
+    job_id = client.post("/evaluation-jobs", json=payload).json()["job_id"]
+
+    started = client.post(f"/evaluation-jobs/{job_id}/run")
+    assert started.status_code == 202
+    assert started.json()["status"] in {"queued", "running", "completed"}
+    done = _wait_for_status(client, job_id, {"completed", "failed"})
+    assert done["status"] == "completed" and done["linked_run_id"]
+    assert client.get(f"/evaluation-jobs/{job_id}/summary").json()["report"]["total_test_cases"] == 3
+    assert client.post(f"/evaluation-jobs/{job_id}/run").status_code == 409
+
+    queued_ids = [client.post("/evaluation-jobs", json=payload).json()["job_id"] for _ in range(2)]
+    for queued_id in queued_ids:
+        client.post(f"/evaluation-jobs/{queued_id}/queue")
+    scheduled = client.post("/evaluation-jobs/process-queue?max_jobs=5")
+    assert scheduled.status_code == 202
+    assert scheduled.json()["scheduled_count"] == 2 and set(scheduled.json()["job_ids"]) == set(queued_ids)
+    # Scheduling an already-scheduled job again is harmless: the atomic claim lets one execution through.
+    client.post(f"/evaluation-jobs/{queued_ids[0]}/run")
+    for queued_id in queued_ids:
+        assert _wait_for_status(client, queued_id, {"completed", "failed"})["status"] == "completed"
+    runs = {client.get(f"/evaluation-jobs/{queued_id}").json()["linked_run_id"] for queued_id in queued_ids}
+    assert len(runs) == 2

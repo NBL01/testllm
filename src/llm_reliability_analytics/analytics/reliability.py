@@ -69,6 +69,12 @@ class ReliabilityReport(BaseModel):
     accuracy: float = Field(ge=0.0, le=1.0)
     average_latency_ms: float = Field(ge=0.0)
     p95_latency_ms: float = Field(default=0.0, ge=0.0)
+    # Disaggregated headline metrics; None means "not measurable", never zero.
+    p50_latency_ms: float = Field(default=0.0, ge=0.0)
+    repeat_k: int | None = Field(default=None, ge=2)
+    pass_at_k: float | None = Field(default=None, ge=0.0, le=1.0)
+    pass_hat_k: float | None = Field(default=None, ge=0.0, le=1.0)
+    schema_pass_rate: float | None = Field(default=None, ge=0.0, le=1.0)
     category_reports: list[CategoryLevelReport] = Field(default_factory=list)
     category_wise_accuracy: dict[str, float] = Field(default_factory=dict)
     oracle_type_pass_rate: dict[str, float] = Field(default_factory=dict)
@@ -161,6 +167,9 @@ def compute_reliability_report(
     latencies = [result.latency_ms for result in results]
     average_latency_ms = sum(latencies) / total_test_cases
     p95_latency_ms = _compute_p95(latencies)
+    p50_latency_ms = _nearest_rank(latencies, 0.50)
+    repeat_k, pass_at_k, pass_hat_k = _compute_pass_k(results)
+    schema_pass_rate = (sum(result.is_correct for result in schema_results) / len(schema_results)) if schema_results else None
 
     category_reports = _compute_category_reports(results)
     category_wise_accuracy = {report.category: report.accuracy for report in category_reports}
@@ -230,6 +239,11 @@ def compute_reliability_report(
         schema_attempt_count=len(schema_results),
         measurement_notes=_measurement_notes(total_test_cases, repeated_case_count, len(schema_results)),
         latency_sources=dict(sorted(Counter(result.latency_source or "unknown" for result in results).items())),
+        p50_latency_ms=p50_latency_ms,
+        repeat_k=repeat_k,
+        pass_at_k=pass_at_k,
+        pass_hat_k=pass_hat_k,
+        schema_pass_rate=schema_pass_rate,
         run_id=resolved_run_id,
         dataset_version=resolved_dataset_version,
         repetition_index=resolved_repetition_index,
@@ -674,11 +688,31 @@ def _compute_latency_score(average_latency_ms: float, latency_slo_ms: float) -> 
 
 
 def _compute_p95(values: list[float]) -> float:
+    return _nearest_rank(values, 0.95)
+
+
+def _nearest_rank(values: list[float], quantile: float) -> float:
     if not values:
         return 0.0
     sorted_values = sorted(values)
-    rank = max(1, ceil(0.95 * len(sorted_values)))
+    rank = max(1, ceil(quantile * len(sorted_values)))
     return float(sorted_values[rank - 1])
+
+
+def _compute_pass_k(results: list[TestResult]) -> tuple[int | None, float | None, float | None]:
+    """pass@k (any of k attempts passes) and pass^k (all k pass) over unique cases.
+
+    Only defined when every case has the same k >= 2 attempts; partial or single-attempt
+    runs return None rather than mixing different k values.
+    """
+    outcomes: dict[str, list[bool]] = defaultdict(list)
+    for result in results:
+        outcomes[result.test_case_id].append(result.is_correct)
+    attempt_counts = {len(case) for case in outcomes.values()}
+    if len(attempt_counts) != 1 or (k := attempt_counts.pop()) < 2:
+        return None, None, None
+    cases = len(outcomes)
+    return k, sum(any(case) for case in outcomes.values()) / cases, sum(all(case) for case in outcomes.values()) / cases
 
 
 def _clamp01(value: float) -> float:
