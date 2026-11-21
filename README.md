@@ -1,323 +1,163 @@
-# llm-reliability-analytics
+# LLM Reliability Analytics
 
-LLM reliability evaluation platform with:
-- structured test datasets
-- pluggable correctness oracles
-- repeatable batch runs
-- DuckDB-backed analytics
-- Streamlit dashboard
+Local-first, evaluation-first LLM testing: create a job, run a dataset against a
+mock or local Ollama model, inspect attempt-level evidence, and export a report.
 
-## Stack
+- **Next.js** is the client-facing job creation, status, and review surface.
+- **Streamlit** is the internal analytics, comparison, and candidate-curation console.
+- **FastAPI** owns execution, persistence, and backend exports. Both UIs and the
+  queue CLI call it over HTTP.
+- **DuckDB** stores jobs, frozen dataset inputs, runs, results, traces, and review history.
 
-- Python 3.11
-- FastAPI
-- Pydantic
-- DuckDB
-- Pandas
-- Streamlit
-- Pytest
+There is **no authentication or authorization**. Run on loopback for trusted local
+users only. This is not a public or multi-tenant deployment. The repaired foundation
+is not a claim that the MVP release gate has passed.
 
-## Architecture
+## Start Locally
 
-Pipeline:
-1. Ingestion: load/validate test cases (`JSONL`/`CSV`)
-2. Runner: execute prompts with selected provider (`mock` or local `ollama`)
-3. Oracle engine: score outputs
-4. Storage: persist runs/results in DuckDB
-5. Analytics: compute reliability metrics
-6. Reporting/UI: API + Streamlit dashboard
+Run from the repository root on a POSIX system. Python 3.12 is the current CI
+target; the latest local verification used Python 3.14.10. Use the Node/npm
+toolchain required by the checked-in client package and lockfile. Dependency
+upgrades and release validation are tracked separately.
 
-Hybrid evaluation sources:
-- `regression`: curated static benchmarks
-- `trace_replay`: replay cases promoted from real failed traces
-- `adversarial`: targeted edge/safety/prompt-override checks
-- `synthetic`: generated broad-coverage cases
-
-## Project Layout
-
-```text
-llm-reliability-analytics/
-  src/llm_reliability_analytics/
-    api/
-    analytics/
-    cli/
-    ingestion/
-    models/
-    oracles/
-    reporting/
-    runner/
-    storage/
-    workflow/
-  frontend/
-    streamlit_app.py
-    components/
-    services/
-    utils/
-  scripts/
-    run_batch.py
-  data/
-```
-
-## Local Installation
-
-### 1) Create and activate virtual environment
-
-For `bash/zsh`:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-```
-
-For `fish`:
-```fish
-python -m venv .venv
-source .venv/bin/activate.fish
-```
-
-### 2) Install dependencies
+These commands work in **bash and fish**, without activating the virtual environment:
 
 ```bash
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+npm --prefix client-app ci
 ```
 
-## Ollama Setup (Local Models)
+Start each process in its own terminal, initially at the repository root.
 
-### 1) Install and start Ollama
+**Terminal 1: one FastAPI worker**
 
 ```bash
-ollama serve
+env LLM_RELIABILITY_DB_PATH="$PWD/data/reliability.duckdb" .venv/bin/python -m uvicorn llm_reliability_analytics.main:app --app-dir src --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-### 2) Pull a lightweight model (recommended for laptop hardware)
+If an existing DB requires a legacy timezone, stop here and follow the
+[migration procedure](docs/MVP_RUNBOOK.md#legacy-timezone-migration). Do not guess it.
+
+**Terminal 2: client UI**
 
 ```bash
-ollama pull llama3.2:1b
+env NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm --prefix client-app run dev -- --hostname 127.0.0.1
 ```
 
-Other recommended lightweight options:
-```bash
-ollama pull qwen2.5:0.5b
-ollama pull qwen2.5:1.5b
-ollama pull gemma2:2b
-```
-
-Optional (heavier):
-```bash
-ollama pull llama3.2:3b
-ollama pull phi3
-```
-
-### 3) Verify installed models
+**Terminal 3: internal admin UI**
 
 ```bash
-ollama list
+env LLM_RELIABILITY_API_BASE_URL=http://127.0.0.1:8000 .venv/bin/python -m streamlit run frontend/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
 ```
 
-## Running the Backend API
+Open [client jobs](http://127.0.0.1:3000/jobs),
+[admin](http://127.0.0.1:8501), and [API docs](http://127.0.0.1:8000/docs).
+Do not run multiple API workers or use reload during evaluations. The API holds
+a per-database ownership lock before schema initialization and restart recovery.
+
+See the [runbook](docs/MVP_RUNBOOK.md) for environment variables, CORS,
+queue processing, backup/restore, failure recovery, and isolated verification.
+
+## First Evaluation
+
+1. Open the client UI and create a job with a backend-listed dataset and `mock-baseline`.
+2. Keep oracle profile `default`: each dataset case supplies its oracle and configuration.
+3. Create the draft, then explicitly run it or queue it for processing.
+4. Inspect status, attempts versus unique cases, expected/actual answers, oracle
+   configuration, explanations, and latency provenance.
+5. Download Markdown, sampled JSON, or the complete failed-attempt CSV.
+
+Job creation validates and freezes the effective case inputs and records
+`dataset_sha256`. It hashes the normalized case snapshot after limits/version
+resolution, not the original file bytes. Later file edits do not change that job.
+Retry and duplicate preserve a saved snapshot and hash; legacy jobs without one
+are revalidated against current source inputs before a new snapshot is created.
+
+## Providers and Datasets
+
+The API catalog is authoritative; do not maintain separate hard-coded presets.
+
+| Option | Meaning |
+| --- | --- |
+| `mock-baseline` | Deterministic rule/hash-based answers; not guaranteed correct. |
+| `mock-noisy` | Seeded answer perturbations; some normalize to the same scored answer. |
+| `mock-failing` | Simulated per-attempt generation errors, useful for evidence/export checks. |
+| `ollama` / `local` | Local Ollama execution; the chosen model must be installed and reachable. |
+
+Mock outputs are reproducible for the same seed and ordered inputs; mock latency is
+not a real model/network benchmark. Failed attempts can still belong to a
+`completed` job: completion describes execution, not accuracy.
+
+The catalog includes the sample dataset, an explicitly labeled regression alias of
+that sample, and the tracked `data/adversarial/mvp_adversarial_v1.jsonl` fixture.
+Custom JSONL/CSV paths refer to the **backend filesystem**, not the browser.
+Unknown mock IDs and unsupported oracle profiles are rejected by job creation.
+
+For optional Ollama use, start the local service, install a model available to your
+machine, and verify it with `ollama list`. `GET /models` reports discovery status.
+There is no automatic switch to mock when a real provider fails.
+
+## Admin and Queue Operations
+
+Streamlit preserves run analytics, model comparisons, result inspection, candidate
+generation/review, promotion, and trace marking. Data and actions use FastAPI;
+pure Python display analytics remain local. Candidate files are exported on the
+backend, not written by the Streamlit app process. Unavailable API access is an
+error, not substitute analytics.
+
+The queue CLI is an HTTP client, safe alongside both UIs:
 
 ```bash
-uvicorn llm_reliability_analytics.main:app --app-dir src --reload
+env PYTHONPATH=src LLM_RELIABILITY_API_BASE_URL=http://127.0.0.1:8000 .venv/bin/python -m llm_reliability_analytics.cli.process_queue --max-jobs 5 --poll-interval-seconds 3 --iterations 20
 ```
 
-Open docs:
-- http://127.0.0.1:8000/docs
+Queue processing is global, uses enqueue order, and reports per-job failures
+without abandoning later eligible jobs. Each pass processes its initial queue
+snapshot; claim conflicts from another processor are skipped without failure or
+counting. Jobs still queued are picked up on a later poll. It is not a separate DB-owning worker.
+An HTTP timeout does not cancel backend execution; refresh job state before retrying.
 
-## Running Streamlit Internal Admin Console
+Standalone batch/replay/generation scripts and notebooks are **offline maintenance
+tools only**. Stop the backend and queue polling before using them against its DB
+or managed files. They do not inherit the job API's full lifecycle/snapshot contract.
 
-```bash
-streamlit run frontend/streamlit_app.py
-```
+## Interpret Reports Carefully
 
-Use Streamlit for:
-- internal analytics and KPI deep-dives
-- experiment/model comparison
-- oracle/debug workflows
-- dataset studio and candidate curation
+`metric_version=legacy-v1` preserves the historical composite formula. Internal
+metrics are computed behind FastAPI from persisted results and backend analytics;
+Streamlit consumes them over HTTP. Comparison eligibility checks persisted
+settings, dataset hash, and case/attempt-keyed oracle configuration. Unknown
+configuration evidence is `research_only` and excluded from comparisons.
+Read `measurement_notes`, `repeated_case_count`, `schema_case_count`,
+`schema_attempt_count`, and `latency_sources` with the headline score.
+A singleton's legacy repeatability score is not measured repeatability; the legacy
+schema heuristic is not a schema-only pass rate. Per-model median summaries are
+synthetic, ties count as passes and are disclosed, and they are not deployment
+recommendations. Missing legacy configuration evidence limits comparability even
+when dataset labels match.
 
-## Running Client-Facing Next.js MVP
+CSV exports all stored failed attempts, with quoted fields and spreadsheet-formula
+neutralization; it has no 5,000-row sample cap. JSON explicitly supplies
+`failed_case_total` and `failed_cases_sample`. Exports during a run include only
+evidence persisted so far. See [report semantics](docs/MVP_RUNBOOK.md#reports-and-evidence).
 
-```bash
-cd client-app
-npm install
-npm run dev
-```
+## Repository Map
 
-Optional API base URL:
+| Path | Responsibility |
+| --- | --- |
+| `client-app/` | Client evaluation workflow and HTTP adapters |
+| `frontend/` | Streamlit internal console and HTTP adapters |
+| `src/llm_reliability_analytics/api/` | Product and internal FastAPI routes |
+| `src/llm_reliability_analytics/workflow/` | Job state machine and evaluation orchestration |
+| `src/llm_reliability_analytics/storage/` | DuckDB persistence and migrations |
+| `src/llm_reliability_analytics/runner/`, `oracles/` | Provider calls and correctness checks |
+| `src/llm_reliability_analytics/analytics/`, `reporting/` | Python metrics and exports |
+| `tests/` | Python regression coverage; use isolated databases |
+| `data/` | Fixtures and local operational data |
 
-```bash
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm run dev
-```
-
-If not set, the client app defaults to:
-- `http://localhost:8000`
-
-Use Next.js for:
-- creating evaluation jobs
-- tracking job status
-- reviewing summary metrics
-- inspecting failed cases and traces
-- exporting client-facing reports
-
-## Running Both UI Surfaces Together
-
-Terminal 1 (FastAPI):
-```bash
-uvicorn llm_reliability_analytics.main:app --app-dir src --reload
-```
-
-Terminal 2 (Next.js client app):
-```bash
-cd client-app
-NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000 npm run dev
-```
-
-Terminal 3 (Streamlit internal admin):
-```bash
-streamlit run frontend/streamlit_app.py
-```
-
-## Running Evaluations with a Selected Local Model
-
-### Frontend flow
-1. Open Streamlit.
-2. Use **Run New Evaluation**.
-3. Select provider:
-   - `Mock`
-   - `Ollama (local)`
-4. Select model (`llama3.2:1b`, `qwen2.5:1.5b`, etc.).
-5. Set `temperature`, `repeat_count`, `max_output_tokens`.
-6. Click **Start Evaluation Run**.
-7. After completion, choose the run in sidebar and verify:
-   - run label
-   - provider
-   - model name
-   - mode
-
-### CLI flow
-
-Mock:
-```bash
-python scripts/run_batch.py --provider mock --model mock-baseline
-```
-
-Ollama local:
-```bash
-python scripts/run_batch.py --provider ollama --model llama3.2:1b
-python scripts/run_batch.py --provider ollama --model qwen2.5:1.5b --repeat-count 2
-```
-
-Common options:
-- `--dataset sample_test_cases.jsonl`
-- `--temperature 0.1`
-- `--max-output-tokens 128`
-- `--run-name local-ollama-baseline`
-- `--evaluation-mode regression|exploratory|adversarial|trace_replay`
-
-Queue processor CLI:
-```bash
-python -m llm_reliability_analytics.cli.process_queue --max-jobs 10
-python -m llm_reliability_analytics.cli.process_queue --max-jobs 5 --poll-interval-seconds 3 --iterations 20
-```
-
-## Hybrid Evaluation Workflow
-
-1. Run a normal regression/adversarial batch.
-2. System stores full traces in DuckDB (`evaluation_traces` table).
-3. Inspect failed/low-score cases in Streamlit Result Inspector.
-4. Mark failed traces as candidates for regression/adversarial sets.
-5. Replay traces in a future run.
-
-Trace replay CLI example:
-```bash
-python scripts/run_batch.py \
-  --provider ollama \
-  --model qwen2.5:0.5b \
-  --trace-replay-run-id <source_run_id> \
-  --trace-replay-only-failed \
-  --run-name trace-replay-check
-```
-
-Adversarial dataset example:
-```bash
-python scripts/run_batch.py \
-  --provider ollama \
-  --model llama3.2:1b \
-  --dataset adversarial/sample_adversarial_test_cases.jsonl \
-  --evaluation-mode adversarial \
-  --run-name adversarial-smoke
-```
-
-## API Endpoints
-
-- `GET /health`
-- `GET /models`
-- `POST /load-test-cases`
-- `POST /run-batch`
-- `GET /report/{run_id}`
-- `POST /candidates/generate`
-- `GET /candidates`
-- `POST /candidates/{candidate_id}/status`
-- `GET /candidates/{candidate_id}/events`
-- `POST /evaluation-jobs`
-- `POST /evaluation-jobs/{job_id}/duplicate`
-- `POST /evaluation-jobs/{job_id}/retry`
-- `GET /evaluation-jobs`
-- `GET /evaluation-jobs/options`
-- `GET /evaluation-jobs/{job_id}`
-- `POST /evaluation-jobs/{job_id}/run`
-- `POST /evaluation-jobs/{job_id}/queue`
-- `POST /evaluation-jobs/{job_id}/cancel`
-- `POST /evaluation-jobs/process-queue`
-- `GET /evaluation-jobs/queue/stats`
-- `GET /evaluation-jobs/{job_id}/summary`
-- `GET /evaluation-jobs/{job_id}/failed-cases`
-- `GET /evaluation-jobs/{job_id}/traces`
-- `GET /evaluation-jobs/{job_id}/report`
-- `GET /evaluation-jobs/{job_id}/client-report`
-
-Pagination query params supported:
-- `GET /evaluation-jobs?limit=<n>&offset=<n>&status=<status>&sort_by=created_at|updated_at&sort_order=asc|desc&q=<search>`
-- `GET /evaluation-jobs/{job_id}/failed-cases?limit=<n>&offset=<n>`
-- `GET /evaluation-jobs/{job_id}/traces?limit=<n>&offset=<n>&only_failed=true|false&test_case_id=<case_id>`
-
-`GET /evaluation-jobs/{job_id}/traces` supports optional query filters:
-- `only_failed=true|false`
-- `test_case_id=<case_id>`
-
-## V2 Scope and Roadmap
-
-- Product scope: `docs/PRODUCT_SCOPE_V2.md`
-- Delivery roadmap: `docs/ROADMAP_V2.md`
-
-## Candidate Test Authoring (V2 Starter)
-
-Generate review candidates with seeded logic:
-
-```bash
-python scripts/generate_candidates.py --categories factual_qa,classification --per-category 5
-```
-
-Optional model-assisted prompt rewrite:
-
-```bash
-python scripts/generate_candidates.py \
-  --provider ollama \
-  --model qwen2.5:0.5b \
-  --categories numeric_reasoning,format_constrained_json \
-  --per-category 4
-```
-
-Default output:
-- `data/candidates/generated_candidate_test_cases.jsonl`
-
-From Streamlit Dataset Studio, approved candidates can be promoted and exported as versioned JSONL:
-- Regression/Synthetic export: `data/raw/<dataset_version>_<source>_promoted.jsonl`
-- Adversarial export: `data/adversarial/<dataset_version>_adversarial_promoted.jsonl`
-
-## Notes
-
-- DuckDB file path: `data/reliability.duckdb`
-- If schema changes, legacy tables are backed up as `*_backup_<timestamp>`
-- If Ollama is unavailable or model is not installed, use `mock` provider as fallback
-- Candidate trace promotions are written under `data/candidates/`
+[Architecture](ARCHITECTURE.md) describes the current boundaries.
+[Development plan](DEVELOPMENT_PLAN.md) separates delivered foundations from
+remaining acceptance work. Older [V2 scope](docs/PRODUCT_SCOPE_V2.md) and
+[V2 roadmap](docs/ROADMAP_V2.md) are historical planning context, not the current
+startup or release checklist.
