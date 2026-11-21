@@ -531,12 +531,15 @@ def get_job_summary(job_id: str) -> EvaluationJobSummaryResult:
     )
 
 
-def get_job_failed_cases(job_id: str, limit: int = 200, offset: int = 0) -> EvaluationJobFailedCasesResult:
+def get_job_failed_cases(job_id: str, limit: int = 200, offset: int = 0, error_type: str | None = None,
+                         category: str | None = None) -> EvaluationJobFailedCasesResult:
     job = get_job(job_id)
     run_id = _require_run_id(job)
     effective_offset = max(0, int(offset))
     results = fetch_results_for_run(run_id)
-    failed = [result for result in results if not result.is_correct]
+    failed = [result for result in results if not result.is_correct
+              and (error_type is None or result.error_type == error_type)
+              and (category is None or result.category == category)]
     failed_sorted = sorted(
         failed,
         key=lambda result: (result.score, result.latency_ms, result.test_case_id, result.attempt_index),

@@ -695,3 +695,19 @@ def test_running_job_outside_this_process_cannot_be_stopped(monkeypatch, tmp_pat
     update_evaluation_job(job_id, status="running", linked_run_id="elsewhere")
     response = client.post(f"/evaluation-jobs/{job_id}/cancel", json={"reason": "x"})
     assert response.status_code == 409 and "not executing in this API process" in response.json()["detail"]
+
+
+def test_failed_cases_filter_by_error_type_and_category_matches_report_counts(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "failed_filters.duckdb"))
+    client = TestClient(app)
+    job_id = client.post("/evaluation-jobs", json={"input_path": "data/raw/llm_eval_dataset_v2_300.jsonl",
+                                                   "dataset_version": "v2.0-demo"}).json()["job_id"]
+    assert client.post(f"/evaluation-jobs/{job_id}/run?wait=true").status_code == 200
+    report = client.get(f"/evaluation-jobs/{job_id}/summary").json()["report"]
+    assert len(report["error_distribution"]) > 1  # the mix this test is about
+    for error_type, count in report["error_distribution"].items():
+        page = client.get(f"/evaluation-jobs/{job_id}/failed-cases", params={"error_type": error_type, "limit": 500}).json()
+        assert page["total"] == count and {item["error_type"] for item in page["items"]} == {error_type}
+    for category in (item for item in report["category_reports"] if item["failed"]):
+        page = client.get(f"/evaluation-jobs/{job_id}/failed-cases", params={"category": category["category"], "limit": 500}).json()
+        assert page["total"] == category["failed"] and {item["category"] for item in page["items"]} == {category["category"]}

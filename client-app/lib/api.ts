@@ -107,11 +107,13 @@ export function getJobSummary(jobId: string): Promise<JobSummaryResult> {
 
 export function getJobFailedCases(
   jobId: string,
-  options?: { limit?: number; offset?: number }
+  options?: { limit?: number; offset?: number; errorType?: string; category?: string }
 ): Promise<FailedCasesResponse> {
   const query = new URLSearchParams();
   query.set("limit", String(options?.limit ?? 50));
   query.set("offset", String(options?.offset ?? 0));
+  if (options?.errorType) query.set("error_type", options.errorType);
+  if (options?.category) query.set("category", options.category);
   return requestJson<FailedCasesResponse>(`/evaluation-jobs/${jobId}/failed-cases?${query.toString()}`);
 }
 

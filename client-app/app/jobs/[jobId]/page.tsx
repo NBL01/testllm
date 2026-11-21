@@ -77,6 +77,7 @@ function JobDetail({ jobId }: { jobId: string }) {
   const router = useRouter();
   const [refresh, setRefresh] = useState(0);
   const [failedOffset, setFailedOffset] = useState(0);
+  const [failedFilter, setFailedFilter] = useState<{ kind: "errorType" | "category"; value: string } | null>(null);
   const [tracesOffset, setTracesOffset] = useState(0);
   const [traceCaseInput, setTraceCaseInput] = useState("");
   const [traceCaseFilter, setTraceCaseFilter] = useState("");
@@ -98,8 +99,8 @@ function JobDetail({ jobId }: { jobId: string }) {
   const reviewPoll = action || poll ? 3000 : 0;
   const reviewRevision = `${reviewKey}:${job?.status}`;
   const summaryResource = useRemoteResource(reviewKey ? `${reviewRevision}:summary` : null, () => getJobSummary(jobId), refresh, reviewPoll);
-  const failedResource = useRemoteResource(reviewKey ? `${reviewRevision}:failed:${failedOffset}` : null,
-    () => getJobFailedCases(jobId, { limit: pageSize, offset: failedOffset }), refresh, reviewPoll);
+  const failedResource = useRemoteResource(reviewKey ? `${reviewRevision}:failed:${failedOffset}:${failedFilter?.kind}:${failedFilter?.value}` : null,
+    () => getJobFailedCases(jobId, { limit: pageSize, offset: failedOffset, [failedFilter?.kind ?? "errorType"]: failedFilter?.value }), refresh, reviewPoll);
   const tracesResource = useRemoteResource(reviewKey ? JSON.stringify([reviewRevision, tracesOffset, onlyFailedTraces, traceCaseFilter]) : null,
     () => getJobTraces(jobId, { limit: pageSize, offset: tracesOffset, onlyFailed: onlyFailedTraces, testCaseId: traceCaseFilter }), refresh, reviewPoll);
   const reportResource = useRemoteResource(reviewKey ? `${reviewRevision}:report` : null, () => getJobReport(jobId), refresh, reviewPoll);
@@ -270,6 +271,24 @@ function JobDetail({ jobId }: { jobId: string }) {
         <section className="panel">
           <h2>Failed Attempts ({failedTotal})</h2>
           <PanelError label="Failed attempts" error={failedResource.error} />
+          {summary && (() => {
+            const options = [
+              ...Object.entries(summary.report.error_distribution ?? {}).map(([value, count]) => ({ kind: "errorType" as const, value, count })),
+              ...(summary.report.category_reports ?? []).filter(item => item.failed > 0)
+                .map(item => ({ kind: "category" as const, value: item.category, count: item.failed }))
+            ];
+            const pick = (next: typeof failedFilter) => { setFailedFilter(next); setFailedOffset(0); };
+            return options.length > 1 && <div className="chips" role="group" aria-label="Filter failed attempts">
+              <button className="chip" type="button" aria-pressed={!failedFilter} onClick={() => pick(null)}>All<span className="chip-count">{summary.report.failed}</span></button>
+              {options.map(option => {
+                const active = failedFilter?.kind === option.kind && failedFilter.value === option.value;
+                return <button key={`${option.kind}:${option.value}`} className="chip" type="button" aria-pressed={active}
+                  onClick={() => pick(active ? null : { kind: option.kind, value: option.value })}>
+                  {option.kind === "category" ? `category: ${option.value}` : option.value}<span className="chip-count">{option.count}</span>
+                </button>;
+              })}
+            </div>;
+          })()}
           {!failedCases.length ? !failedResource.error && <p className="meta">{failedResource.loading ? "Loading failed attempts..." : job.status === "completed" && failedResource.data ? "No failed attempts on this page." : emptyEvidence}</p> :
             <div className="evidence-list">{failedCases.map(item => <details className="evidence" key={`${item.test_case_id}:${item.attempt_index}`}>
               <summary><strong>{item.test_case_id}</strong><span className="meta">attempt {item.attempt_index} · {item.category ?? "uncategorized"}</span>

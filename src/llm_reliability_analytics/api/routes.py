@@ -309,9 +309,12 @@ def evaluation_job_failed_cases_endpoint(
     job_id: str,
     limit: int = Query(default=200, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
+    error_type: str | None = Query(default=None, description="Only failed attempts with this error type."),
+    category: str | None = Query(default=None, description="Only failed attempts in this category."),
 ) -> EvaluationJobFailedCasesResponse:
     try:
-        result: EvaluationJobFailedCasesResult = get_job_failed_cases(job_id, limit=limit, offset=offset)
+        result: EvaluationJobFailedCasesResult = get_job_failed_cases(
+            job_id, limit=limit, offset=offset, error_type=error_type, category=category)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

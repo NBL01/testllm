@@ -77,6 +77,11 @@ test('detail renders backend unique_test_cases and latency source count dictiona
   assert.match(html, /pass\^2<\/div><div class="kpi-value">50.0%/);
   assert.match(html, /pass@2<\/div><div class="kpi-value">100.0%/);
   assert.match(html, /Legacy composite \(legacy-v1\): <code>0.700/);
+  // Failure triage chips: one per error type and per failing category, with counts.
+  assert.match(html, /aria-label="Filter failed attempts"/);
+  assert.match(html, />wrong_answer<span class="chip-count">2<\/span>/);
+  assert.match(html, />category: safety<span class="chip-count">2<\/span>/);
+  assert.doesNotMatch(html, /category: math</);
   // Weakest category first; a failure share is not a pass rate, so it gets the neutral tone.
   assert.ok(html.indexOf('<span>safety</span>') < html.indexOf('<span>math</span>'));
   assert.match(html, /tone-low" style="width:0%"/);
