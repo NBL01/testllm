@@ -49,6 +49,21 @@ the old and new runs are refused as non-comparable because their recorded oracle
 configuration differs. These are small local models on one machine; the numbers
 illustrate the tooling, not a model ranking.
 
+## Adversarial QA rounds (2026-11-21)
+
+Three test-fix rounds after the benchmark, using `agy` agents in isolated repository
+copies for review and test writing, plus live probing. Every fix landed with a test.
+
+| Round | Method | Real defects fixed |
+| --- | --- | --- |
+| 1 | Live probes of provider failure modes; agy adversarial review (12 findings); agy-written edge-case tests run by the agent (18) | OpenAI-compatible jobs with a missing model or dead endpoint "completed" with every attempt failed (now fail fast, partial evidence kept); a "Run not found" error during every running job; `exact_match` passed `-11` for `11`; free-text numbers passed `strict_output`; real-model latency labeled `measured`; empty output counted as runtime error; stale compare state and dropped clicks from poll flicker (fixed by an agy agent); stop/claim race; unknown-category filter; retry 500 |
+| 2 | agy property tests for every oracle and job input (49 cases); agy evidence-correctness review (10 findings) | Invalid JSON schema crashed its oracle; unbounded `repeat_count` (now 1-100); replay crowded out failures; Markdown table injection via category names; blank CSV rows rejected datasets; two misnamed coverage counts |
+| Stress | 30 jobs (6 live Ollama) with concurrent run/queue/cancel/stop/duplicate and three polling readers | 1,504 requests, 0 server errors, no stuck jobs; job and run statuses consistent in the database; no orphaned or duplicate attempts |
+
+Reviewed and deliberately not changed: the legacy-v1 consistency and repeatability
+formulas (frozen for comparability; the pass^k/pass@k headline is correct), and dataset
+paths outside the repository (documented trusted-local design).
+
 ## Goal-by-goal evidence (G01-G18)
 
 Requirements are those of the MVP implementation review plan. "Met" means automated
