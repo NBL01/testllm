@@ -102,6 +102,7 @@ export default function JobsPage() {
               placeholder="project/client/team/model/job id"
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter") { setSearchFilter(searchInput.trim()); setJobsOffset(0); } }}
             />
           </label>
           <button

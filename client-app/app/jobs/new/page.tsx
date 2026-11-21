@@ -308,7 +308,7 @@ export default function NewJobPage() {
         <p className="meta">API: <code>{API_BASE_URL}</code>. Configure <code>NEXT_PUBLIC_API_BASE_URL</code> in
           <code> client-app/.env.local</code>, then restart Next.js. If unavailable, run from the repository root:
           <code> .venv/bin/python -m uvicorn llm_reliability_analytics.main:app --app-dir src --reload</code>.</p>
-        <div className="form-grid">
+        <div className="form-grid" aria-live="polite">
           <div>
             <strong>Backend API</strong>
             <div className="meta">
@@ -393,7 +393,7 @@ export default function NewJobPage() {
             </label>
           </div>
           {selectedModelMayBeMissing && (
-            <p className="error">
+            <p className="error" role="alert">
               Selected Ollama model may not be installed locally. Install with <code>ollama pull {state.model_name}</code>.
             </p>
           )}

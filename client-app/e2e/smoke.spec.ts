@@ -140,6 +140,18 @@ test('cancel dismissal and rapid repeated submission preserve a single draft', a
   expect((await (await request.get(`${api}/evaluation-jobs/${created.job_id}`)).json()).status).toBe('draft');
 });
 
+test('job search applies on Enter', async ({ page, request }) => {
+  const project = `enter-search-${Date.now()}`;
+  const created = await (await request.post(`${api}/evaluation-jobs`, { data: {
+    provider: 'mock', model_name: 'mock-baseline', input_path: 'sample_test_cases.jsonl', project_name: project
+  } })).json();
+  await page.goto('/jobs');
+  await page.getByLabel('Search').fill(project);
+  await page.getByLabel('Search').press('Enter');
+  await expect(page.locator('p.meta', { hasText: 'Search:' })).toContainText(project);
+  await expect(page.locator(`a[href="/jobs/${created.job_id}"]`).first()).toBeVisible();
+});
+
 test('both local provider names disclose missing models', async ({ page }) => {
   await page.route(`${api}/models`, route => route.fulfill({ json: {
     provider: 'ollama', ollama_reachable: false, installed_models: [], recommended_models: [],

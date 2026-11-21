@@ -183,6 +183,7 @@ function JobDetail({ jobId }: { jobId: string }) {
       {actionError && <p className="error" role="alert">{actionError}</p>}
       {job && <div className="grid">
         <section className="panel grid">
+          <h2 style={{ margin: 0 }}>Job Overview</h2>
           <div className="btn-row">
             <span className={`pill status-${job.status}`}>{job.status}</span>
             {job.linked_run_id && <span className="pill">run: {job.linked_run_id}</span>}
@@ -204,7 +205,7 @@ function JobDetail({ jobId }: { jobId: string }) {
           </div>
           {job.source_job_id && <p className="meta">Source job: <Link href={`/jobs/${job.source_job_id}`}><u>{job.source_job_id}</u></Link></p>}
           {job.dataset_sha256 && <p className="meta">Frozen dataset SHA-256: <code>{job.dataset_sha256}</code></p>}
-          {job.failure_reason && <p className="error">Failure reason: {job.failure_reason}</p>}
+          {job.failure_reason && <p className="error" role="alert">Failure reason: {job.failure_reason}</p>}
           {job.notes && <p className="meta">Notes: {job.notes}</p>}
         </section>
 
@@ -256,7 +257,7 @@ function JobDetail({ jobId }: { jobId: string }) {
         <section className="panel" id="oracle-traces">
           <h2>Oracle Traces ({tracesTotal})</h2>
           <div className="btn-row">
-            <label>Filter case<input className="input" placeholder="test_case_id" value={traceCaseInput} onChange={event => setTraceCaseInput(event.target.value)} /></label>
+            <label>Filter case<input className="input" placeholder="test_case_id" value={traceCaseInput} onChange={event => setTraceCaseInput(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { setTraceCaseFilter(traceCaseInput.trim()); setTracesOffset(0); } }} /></label>
             <label className="checkbox-label"><input type="checkbox" checked={onlyFailedTraces} onChange={event => { setOnlyFailedTraces(event.target.checked); setTracesOffset(0); }} />Failed only</label>
             <button className="btn btn-secondary" onClick={() => { setTraceCaseFilter(traceCaseInput.trim()); setTracesOffset(0); }} type="button">Apply Filter</button>
             <button className="btn btn-secondary" onClick={() => { setTraceCaseInput(""); setTraceCaseFilter(""); setTracesOffset(0); }} type="button">Clear Filter</button>
