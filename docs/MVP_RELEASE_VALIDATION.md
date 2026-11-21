@@ -1,8 +1,30 @@
 # MVP Release Validation
 
-Status: **release acceptance pending**. Automated gates passed on 2026-11-21
-against code commit `a7b25c0`; manual goal-by-goal acceptance, recovery rehearsal
-on the final code and a release decision are still open. Nothing here approves a merge, release or deployment.
+Status: **release acceptance pending**. Automated gates and a live local-model
+check passed on 2026-11-21 against code commit `65e134e`; manual accessibility
+checks, goal-by-goal acceptance and a release decision are still open. Nothing here
+approves a merge, release or deployment.
+
+## 2026-11-21 second round: product changes and evidence
+
+Changes since the first run below, made on the recommendations of an external
+review: asynchronous execution (`/run` and `/process-queue` return 202; one
+in-process worker; `?wait=true` for blocking callers), an `openai_compatible`
+provider, pass@k / pass^k / schema-only / p50 headline metrics with the legacy-v1
+composite demoted, a Next.js `/compare` page with per-case regressions, retirement
+of the Streamlit console and its routes, and an exact `requirements.lock`.
+
+| Check | Command / method | Result |
+| --- | --- | --- |
+| Python regressions | `env LLM_RELIABILITY_DB_PATH=<tmp> MPLBACKEND=Agg .venv/bin/python -m pytest -q` | 221 passed (suite shrank with the Streamlit removal) |
+| Locked dependency set | Fresh venv from `requirements.txt` ranges, full suite, then `pip freeze` | 221 passed on FastAPI 0.165.0, Starlette 1.10.0, DuckDB 1.5.6, Pydantic 2.14.4; all 40 packages declare Python 3.12 support |
+| Client unit + infra | `npm --prefix client-app test` | 21 + 3 passed |
+| Browser journeys | `npm --prefix client-app run test:e2e` | 24 passed (desktop and Pixel 7), including asynchronous run polling and the compare page; 0 server tracebacks |
+| Live local model | qwen2.5:0.5b on local Ollama, 5 sample cases x 2 repeats, through `POST /run` (202 in 0.2 s) | Native Ollama: 10/10, pass^2 1.0, p50 121 ms, p95 56.3 s (first call loads the model). OpenAI-compatible via Ollama `/v1`: 10/10, pass^2 1.0, p50 99 ms, p95 198 ms |
+| Cross-provider comparison | `/internal/metrics/compare` on the two live runs; mock vs adversarial dataset | Real-vs-real comparable; different dataset refused with five named issues |
+
+The UI coexistence and Streamlit rows in the first run below are historical: that
+console no longer exists.
 
 ## 2026-11-21 verification run
 
@@ -96,11 +118,13 @@ a dependency advisory review or a supported-version matrix.
 ## Remaining release checks
 
 1. Manual keyboard and screen-reader smoke of the client beyond the automated
-   keyboard-order check, and a real browser (not `AppTest`) Streamlit session.
-2. Goal-by-goal G01-G17 evidence and reconciliation of remaining defects/limitations.
-3. Optional live Ollama run, kept separate from the deterministic mock gate.
-4. Release decision, including whether to pin Python dependency upper bounds now
-   that a fresh install resolves newer minor versions than the recorded runtime.
+   keyboard-order check.
+2. Goal-by-goal G01-G17 evidence and reconciliation; G16 (Streamlit) is now
+   intentionally retired and its comparison duties live in the client.
+3. Observe the GitHub Actions run on the locked dependency set (only local runs so far).
+4. Optional: a remote OpenAI-compatible endpoint (vLLM or a paid API) with its own
+   key, kept separate from the deterministic mock gate.
+5. Release decision.
 
 Use [the runbook](MVP_RUNBOOK.md) for supported local operation while release
 acceptance remains pending.

@@ -7,21 +7,15 @@ remaining gates are in [Development Plan](DEVELOPMENT_PLAN.md).
 ## Product and Process Boundaries
 
 The primary flow is **create evaluation job -> execute -> inspect evidence ->
-export**. Candidate generation and model comparison support that flow rather than
+compare -> export**. Candidate generation and model comparison support that flow rather than
 replacing it with a recommendation-first product.
 
 | Process | Owns | Must not do |
 | --- | --- | --- |
-| Next.js | Client forms, status, review, downloads | Execute models/oracles or open DuckDB |
-| Streamlit | Internal analytics, comparisons, candidate/review UI | Open DuckDB, launch local evaluation workflows, write candidate files |
-| FastAPI, one worker | Job transitions, model calls, storage, internal reads/actions, exports | Share operational DB ownership with another process |
-| Queue CLI | HTTP queue-processing and stats requests | Open DuckDB or execute evaluation code locally |
-| Offline maintenance tools | Explicit standalone batch/replay/file maintenance | Run against the live backend's database/files |
-
-Streamlit retains pure Python tabular analytics on API snapshots; this is not a
-second storage/execution boundary. It caches dashboard snapshots briefly and
-provides explicit refresh and backend-unavailable errors. The internal snapshot
-endpoint currently returns full dashboard tables, not a scalable paginated warehouse.
+| Next.js | Client forms, navigation (`/` redirects to `/jobs`; top bar links Jobs, Compare, New job), status, review, comparison (`/compare`), downloads | Execute models/oracles or open DuckDB |
+| FastAPI, one worker | Job transitions, async queue scheduling, model calls, storage, comparison endpoints, exports | Share operational DB ownership with another process |
+| Queue CLI | HTTP queue-processing and stats requests (passes `wait=true`) | Open DuckDB or execute evaluation code locally |
+| Offline maintenance tools | Explicit standalone batch and candidate CLI modules (`llm_reliability_analytics.cli.generate_candidates`, `llm_reliability_analytics.cli.run_batch`) | Run against the live backend's database/files |
 
 The API lifespan holds `api_database_owner` from
 `src/llm_reliability_analytics/main.py` before migration and recovery. The POSIX
@@ -67,21 +61,28 @@ The job states are `draft`, `queued`, `running`, `completed`, `failed`,
 and `canceled`.
 
 1. Creating a job stores a draft; it does not run the model.
-2. Only an unexecuted draft/queued job can be atomically claimed for execution.
+2. Execution is asynchronous: `POST /evaluation-jobs/{job_id}/run` returns HTTP 202
+   immediately, marks the job as `queued` (or keeps it `queued`), and submits it to
+   an in-process worker thread (`ThreadPoolExecutor(max_workers=1)`) that serializes
+   executions for DuckDB's single writer. The client polls queued and running jobs.
+   Passing `?wait=true` keeps the blocking behavior (used by tests and the queue CLI).
 3. Queueing records `queued_at`; processing orders by enqueue time, with a stable
-   job-ID tie-break, and isolates per-job failures. A claim conflict from another
-   processor is skipped without failure/counting; the initial queue snapshot is
-   processed and remaining jobs are picked up on a later poll.
+   job-ID tie-break, and isolates per-job failures. `POST /evaluation-jobs/process-queue`
+   returns 202 and schedules up to `max_jobs` oldest queued jobs; `?wait=true`
+   processes them synchronously. The queue CLI passes `wait=true` itself. A claim
+   conflict from another processor is skipped without failure/counting; the initial
+   queue snapshot is processed and remaining jobs are picked up on a later poll.
 4. Draft/queued jobs can be canceled. Cancel does not interrupt an active model call.
 5. An execution exception finalizes the run/job as failed while preserving available
    linkage and partial evidence. Failed attempts alone do not imply a failed job.
-6. API startup marks interrupted running jobs/runs failed. It does not automatically
-   resume them; retry creates a new job. Queued jobs remain queued.
+6. API startup marks interrupted running jobs/runs failed (`recover_interrupted_jobs`).
+   It does not automatically resume them; retry creates a new job. Waiting jobs stay queued.
 
-Run and queue-processing HTTP requests are synchronous. One API worker means one
-process, not necessarily one in-flight request: threadpool requests can overlap.
-Atomic job claims prevent duplicate execution of the same job; they do not create
-a distributed scheduler. A lost HTTP response is not proof the backend stopped.
+Run and queue-processing HTTP requests are asynchronous by default, returning 202
+immediately while one in-process worker thread runs jobs one at a time for DuckDB's
+single writer. One API worker means one process. Atomic job claims prevent duplicate
+execution of the same job; they do not create a distributed task broker. HTTP timeouts do not
+affect runs.
 
 ## Python Evaluation Pipeline
 
@@ -89,7 +90,10 @@ a distributed scheduler. A lost HTTP response is not proof the backend stopped.
    creation checks and freezes the effective selection.
 2. `workflow/evaluation_jobs.py` manages product state, claims, recovery and read views.
 3. `workflow/service.py` and `runner/test_runner.py` execute the prepared cases with
-   a provider selected by `runner/client_factory.py`.
+   a provider selected by `runner/client_factory.py`. Supported providers are `mock`,
+   `ollama` / `local` (native Ollama API at `127.0.0.1:11434`), and `openai_compatible`
+   (POST `{base}/chat/completions` on any OpenAI-compatible server such as vLLM, LM Studio,
+   OpenAI, OpenRouter, or Ollama `/v1`).
 4. `oracles/engine.py` scores exact, regex, keyword, numeric-tolerance and JSON-schema
    checks using dataset-defined settings.
 5. Storage persists run/result/trace evidence; Python analytics and reporting derive
@@ -106,6 +110,13 @@ passes use seed `42` explicitly; older/direct batch records may lack that field.
 Mock latency must not be compared to real-provider performance as though measured
 on the same basis.
 
+For `openai_compatible`, the base URL is configured via `LLM_RELIABILITY_OPENAI_BASE_URL`
+(default `http://127.0.0.1:11434/v1`), and an optional key is read from
+`LLM_RELIABILITY_OPENAI_API_KEY` sent as a Bearer token. Both are read only from the API
+server environment, never from requests or the browser; the key is not echoed in errors.
+Paid endpoints are opt-in by setting these variables. Model names are free text in the create form.
+and via `openai_compatible` through the async path.
+
 ## API Surfaces
 
 The live OpenAPI schema at `/docs` is the exact route/parameter reference.
@@ -117,29 +128,38 @@ The live OpenAPI schema at `/docs` is the exact route/parameter reference.
 | Queue operations | `/evaluation-jobs/process-queue`, `/evaluation-jobs/queue/stats` |
 | Job evidence | Summary, failed-cases, traces, report, client-report under `/evaluation-jobs/{job_id}` |
 | Complete CSV | `/evaluation-jobs/{job_id}/failed-cases.csv` |
-| Internal reads | `/internal/dashboard`, `/internal/datasets` |
-| Internal metrics | `/internal/metrics/runs/{run_id}` (and `/insights`); POST `/internal/metrics/eligibility`, `/compare`, `/models`, `/improvement` |
-| Internal actions | `/internal/candidates/promote`, `/internal/trace-candidates` |
-| Retained admin operations | `/run-batch`, `/load-test-cases`, `/report/{run_id}`, candidate generation/review routes |
+| Comparison | POST `/internal/metrics/eligibility`, POST `/internal/metrics/compare` |
 
-The retained batch API is an admin compatibility flow, not a replacement for the
-job lifecycle or a promise that legacy/direct runs carry every frozen-job field.
+Direct batch runs and candidate generation are not exposed over HTTP; they remain available
+only as offline CLI modules (`llm_reliability_analytics.cli.run_batch`, `llm_reliability_analytics.cli.generate_candidates`).
 
 ## Metrics, Comparisons and Exports
 
-`legacy-v1` deliberately preserves numeric heuristic behavior and adds measurement
-scope/provenance rather than silently rewriting historical scores. Reports distinguish
-attempt counts from unique cases and expose repeat/schema eligibility and latency sources.
-Singleton repeatability and all-attempt schema compliance must not be interpreted as
-empirical repeatability or schema-only success rates. The composite is not a validated
-deployment recommendation.
+Headline metrics are disaggregated:
+- **Pass rate** (accuracy over all attempts)
+- **pass^k** (share of unique cases where all k attempts pass)
+- **pass@k** (share of unique cases with at least one passing attempt)
+- **Schema-only pass rate** (pass rate on `json_schema` attempts only)
+- **Latency p50 and p95**
 
-Internal metrics run behind FastAPI, reusing persisted results through
-`fetch_results_for_run` and the shared analytics. Comparison eligibility checks
-persisted settings, dataset hash, and each case/attempt's oracle configuration;
-unknown configuration is marked `research_only` and cannot be compared.
-Multi-run per-model medians are synthetic summaries, not measured repeat
-experiments; correctness ties count as passes and are disclosed.
+`pass^k` and `pass@k` are N/A unless every case has the same k ≥ 2 attempts.
+The legacy-v1 composite (`overall_reliability_score`) preserves historical numeric heuristic
+behavior and is still computed and shown, labelled "Legacy composite", only for comparing
+with older runs; it is not the main score. Reports distinguish attempt counts from unique
+cases and expose repeat/schema eligibility and latency sources. Singleton repeatability and
+all-attempt schema compliance must not be interpreted as empirical repeatability or schema-only
+success rates.
+
+Comparison lives in the Next.js client at `/compare` (also linked from completed jobs):
+select baseline and candidate completed jobs to view metric deltas, pass rate by
+category, and per-case regressions/improvements. Internal metrics run behind FastAPI,
+reusing persisted results through `fetch_results_for_run` and shared analytics.
+The backend refuses non-comparable runs with HTTP 409 (mismatches in dataset hash/version,
+evaluation mode, per-case oracle configuration, temperature, max tokens, repeat count,
+timeout, seed, or case coverage), and the page explains the reasons. Provider and mode
+may differ only when both runs are real executions (`ollama` vs `openai_compatible`);
+comparing mock against real is refused. Unknown configuration evidence is marked
+`research_only` and excluded from comparisons. Per-model synthetic medians no longer exist.
 
 Markdown includes run/job context and measurement caveats. JSON explicitly identifies
 its failed-case sample and total. CSV reads every persisted failed result, without
