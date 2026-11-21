@@ -77,6 +77,8 @@ function JobDetail({ jobId }: { jobId: string }) {
   const router = useRouter();
   const [refresh, setRefresh] = useState(0);
   const [failedOffset, setFailedOffset] = useState(0);
+  const [altProvider, setAltProvider] = useState("ollama");
+  const [altModel, setAltModel] = useState("");
   const [failedFilter, setFailedFilter] = useState<{ kind: "errorType" | "category"; value: string } | null>(null);
   const [tracesOffset, setTracesOffset] = useState(0);
   const [traceCaseInput, setTraceCaseInput] = useState("");
@@ -187,6 +189,7 @@ function JobDetail({ jobId }: { jobId: string }) {
           {canQueue && <button className="btn btn-secondary" disabled={busy} onClick={() => void performAction("Queueing", () => queueJob(jobId))} type="button">Queue Job</button>}
           {canRun && <button className="btn btn-secondary" disabled={busy} onClick={handleCancel} type="button">Cancel Job</button>}
           {canStop && <button className="btn btn-danger" disabled={busy} onClick={handleCancel} type="button">Stop Run</button>}
+          {job?.status === "completed" && job.source_job_id && <Link className="btn btn-secondary" href={`/compare?baseline=${job.source_job_id}&candidate=${jobId}`}>Compare with source</Link>}
           {job?.status === "completed" && <Link className="btn btn-secondary" href={`/compare?baseline=${jobId}`}>Compare</Link>}
           <Link className="btn btn-secondary" href="/jobs">Back to Jobs</Link>
         </div>
@@ -224,6 +227,25 @@ function JobDetail({ jobId }: { jobId: string }) {
           {job.dataset_sha256 && <p className="meta">Frozen dataset SHA-256: <code>{job.dataset_sha256}</code></p>}
           {job.failure_reason && <p className="error" role="alert">Failure reason: {job.failure_reason}</p>}
           {job.notes && <p className="meta">Notes: {job.notes}</p>}
+          <details className="notes">
+            <summary>Run the same evaluation with another model</summary>
+            <div className="toolbar">
+              <label>Provider
+                <select value={altProvider} onChange={event => setAltProvider(event.target.value)}>
+                  {["mock", "ollama", "openai_compatible"].map(provider => <option key={provider} value={provider}>{provider}</option>)}
+                </select>
+              </label>
+              <label className="search">Model
+                <input className="input" value={altModel} placeholder={altProvider === "mock" ? "mock-baseline, mock-noisy or mock-failing" : "e.g. llama3.2:1b"}
+                  onChange={event => setAltModel(event.target.value)} />
+              </label>
+              <button className="btn btn-secondary" type="button" disabled={busy || !altModel.trim()}
+                onClick={() => void performAction("Duplicating", () => duplicateJob(jobId, { provider: altProvider, model_name: altModel.trim() }), true)}>
+                Create Comparable Draft
+              </button>
+            </div>
+            <p className="meta">Copies the frozen dataset snapshot and every setting; only the model changes, so the two runs stay comparable. Run it, then use Compare with source.</p>
+          </details>
         </section>
 
         <section className="panel">

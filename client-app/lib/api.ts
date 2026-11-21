@@ -60,8 +60,9 @@ export function createJob(payload: Record<string, unknown>): Promise<EvaluationJ
   return requestJson<EvaluationJob>("/evaluation-jobs", { method: "POST", body: payload });
 }
 
-export function duplicateJob(jobId: string): Promise<EvaluationJob> {
-  return requestJson<EvaluationJob>(`/evaluation-jobs/${jobId}/duplicate`, { method: "POST" });
+/** Copies the frozen dataset and settings; an optional provider/model swap keeps the pair comparable. */
+export function duplicateJob(jobId: string, swap?: { provider: string; model_name: string }): Promise<EvaluationJob> {
+  return requestJson<EvaluationJob>(`/evaluation-jobs/${jobId}/duplicate`, { method: "POST", ...(swap ? { body: swap } : {}) });
 }
 
 export function retryJob(jobId: string, queue = true): Promise<EvaluationJob> {

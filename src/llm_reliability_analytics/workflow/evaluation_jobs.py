@@ -220,12 +220,18 @@ def create_job(payload: EvaluationJobCreate) -> EvaluationJob:
     return create_evaluation_job(payload, dataset_sha256=fingerprint, dataset_snapshot=snapshot)
 
 
-def duplicate_job(job_id: str) -> EvaluationJob:
+def duplicate_job(job_id: str, provider: str | None = None, model_name: str | None = None) -> EvaluationJob:
+    """Copy a job's frozen snapshot and settings into a new draft; optionally swap only the model,
+    which keeps the pair comparable by construction."""
     source = get_job(job_id)
+    new_provider = provider or source.provider
+    new_model = (model_name or "").strip() or source.model_name
+    if (new_provider, new_model) != (source.provider, source.model_name):
+        _validate_model_choice(new_provider, new_model)
     payload = EvaluationJobCreate(
         input_path=source.input_path,
-        provider=cast(Literal["mock", "ollama", "local", "openai_compatible"], source.provider),
-        model_name=source.model_name,
+        provider=cast(Literal["mock", "ollama", "local", "openai_compatible"], new_provider),
+        model_name=new_model,
         dataset_version=source.dataset_version,
         evaluation_mode=cast(
             Literal["regression", "exploratory", "adversarial", "trace_replay"],
@@ -665,15 +671,20 @@ def _validate_job_create_payload(payload: EvaluationJobCreate) -> None:
         path = resolve_input_path(payload.input_path)
         if not path.is_file() or path.suffix.lower() not in {".jsonl", ".csv"}:
             raise ValueError("Dataset must be a JSONL or CSV file.")
-        if payload.provider == "mock" and payload.model_name not in {"mock-baseline", "mock-noisy", "mock-failing"}:
-            raise ValueError("Unsupported mock model.")
-        if payload.provider in {"ollama", "local", "openai_compatible"} and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", payload.model_name):
-            raise ValueError("Invalid Ollama model identifier; use a model tag such as llama3.2:1b.")
     except FileNotFoundError as exc:
         raise ValueError(str(exc)) from exc
+    _validate_model_choice(payload.provider, payload.model_name)
 
-    if payload.provider in {"ollama", "local", "openai_compatible"} and not payload.model_name.strip():
-        raise ValueError(f"model_name is required when provider={payload.provider}")
+
+def _validate_model_choice(provider: str, model_name: str) -> None:
+    if provider not in {"mock", "ollama", "local", "openai_compatible"}:
+        raise ValueError(f"Unsupported provider: {provider}")
+    if provider == "mock" and model_name not in {"mock-baseline", "mock-noisy", "mock-failing"}:
+        raise ValueError("Unsupported mock model.")
+    if provider != "mock" and not model_name.strip():
+        raise ValueError(f"model_name is required when provider={provider}")
+    if provider != "mock" and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]*", model_name):
+        raise ValueError("Invalid model identifier; use a model tag such as llama3.2:1b.")
 
 
 def _finish_run(run_id: str, status: str) -> None:

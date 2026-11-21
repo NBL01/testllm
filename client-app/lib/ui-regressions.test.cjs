@@ -74,6 +74,8 @@ test('detail renders backend unique_test_cases and latency source count dictiona
   assert.match(html, /1 schema cases eligible/);
   assert.match(html, /Scope is limited to dataset oracle checks/);
   assert.match(html, /2x repeat · temp 0 · 128 tokens/);
+  assert.match(html, /Run the same evaluation with another model/);
+  assert.match(html, />Create Comparable Draft<\/button>/);
   assert.match(html, /pass\^2<\/div><div class="kpi-value">50.0%/);
   assert.match(html, /pass@2<\/div><div class="kpi-value">100.0%/);
   assert.match(html, /Legacy composite \(legacy-v1\): <code>0.700/);

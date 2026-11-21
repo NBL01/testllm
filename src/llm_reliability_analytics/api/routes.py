@@ -150,12 +150,21 @@ def create_evaluation_job_endpoint(request: EvaluationJobCreate) -> EvaluationJo
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+class EvaluationJobDuplicateRequest(BaseModel):
+    """Optional model swap; everything else, including the frozen dataset, is copied."""
+    provider: Literal["mock", "ollama", "local", "openai_compatible"] | None = None
+    model_name: str | None = None
+
+
 @router.post("/evaluation-jobs/{job_id}/duplicate", response_model=EvaluationJob, status_code=201)
-def duplicate_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
+def duplicate_evaluation_job_endpoint(job_id: str, request: EvaluationJobDuplicateRequest | None = None) -> EvaluationJob:
     try:
-        return duplicate_job(job_id)
+        return duplicate_job(job_id, provider=request.provider if request else None,
+                             model_name=request.model_name if request else None)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post("/evaluation-jobs/{job_id}/retry", response_model=EvaluationJob, status_code=201)

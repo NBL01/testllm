@@ -752,3 +752,26 @@ def test_shutdown_stops_the_running_job_and_leaves_scheduled_jobs_queued(monkeyp
     # A later start schedules on a fresh worker.
     assert client.post(f"/evaluation-jobs/{waiting}/run").status_code == 202
     assert _wait_for_status(client, waiting, {"completed", "failed"})["status"] == "completed"
+
+
+def test_duplicate_with_another_model_keeps_snapshot_and_settings_comparable(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "swap_model.duckdb"))
+    client = TestClient(app)
+    source = client.post("/evaluation-jobs", json={"input_path": "sample_test_cases.jsonl", "model_name": "mock-failing",
+                                                   "limit": 4, "repeat_count": 2, "temperature": 0.3}).json()
+    swapped = client.post(f"/evaluation-jobs/{source['job_id']}/duplicate", json={"provider": "mock", "model_name": "mock-baseline"})
+    assert swapped.status_code == 201, swapped.text
+    copy = swapped.json()
+    assert (copy["model_name"], copy["source_job_id"], copy["status"]) == ("mock-baseline", source["job_id"], "draft")
+    for key in ("dataset_sha256", "input_path", "dataset_version", "temperature", "repeat_count", "limit", "max_output_tokens"):
+        assert copy[key] == source[key], key
+    assert client.post(f"/evaluation-jobs/{source['job_id']}/duplicate", json={"provider": "mock", "model_name": "gpt-x"}).status_code == 400
+    assert client.post(f"/evaluation-jobs/{source['job_id']}/duplicate").json()["model_name"] == "mock-failing"  # plain duplicate
+    runs = []
+    for job_id in (source["job_id"], copy["job_id"]):
+        runs.append(client.post(f"/evaluation-jobs/{job_id}/run?wait=true").json()["job"]["linked_run_id"])
+    from fastapi import FastAPI
+    from llm_reliability_analytics.api.internal import router
+    internal = FastAPI(); internal.include_router(router)
+    compared = TestClient(internal).post("/internal/metrics/compare", json={"run_ids": runs})
+    assert compared.status_code == 200, compared.text
