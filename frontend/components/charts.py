@@ -22,7 +22,7 @@ def plot_category_accuracy(category_df: pd.DataFrame) -> None:
     ax.set_title("Accuracy by Category")
     ax.tick_params(axis="x", rotation=30)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
-    st.pyplot(fig, use_container_width=True)
+    st.pyplot(fig)
 
 
 def plot_error_type_frequency(error_df: pd.DataFrame) -> None:
@@ -37,7 +37,7 @@ def plot_error_type_frequency(error_df: pd.DataFrame) -> None:
     ax.set_title("Error Type Frequency")
     ax.tick_params(axis="x", rotation=30)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
-    st.pyplot(fig, use_container_width=True)
+    st.pyplot(fig)
 
 
 def plot_pass_fail_distribution(pass_fail_df: pd.DataFrame) -> None:
@@ -50,7 +50,7 @@ def plot_pass_fail_distribution(pass_fail_df: pd.DataFrame) -> None:
     ax.set_ylabel("Count")
     ax.set_title("Pass / Fail Distribution")
     ax.grid(axis="y", linestyle="--", alpha=0.3)
-    st.pyplot(fig, use_container_width=True)
+    st.pyplot(fig)
 
 
 def plot_oracle_pass_rate(oracle_df: pd.DataFrame) -> None:
@@ -66,7 +66,7 @@ def plot_oracle_pass_rate(oracle_df: pd.DataFrame) -> None:
     ax.set_title("Pass Rate by Oracle Type")
     ax.tick_params(axis="x", rotation=30)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
-    st.pyplot(fig, use_container_width=True)
+    st.pyplot(fig)
 
 
 def plot_oracle_usage(oracle_df: pd.DataFrame) -> None:
@@ -81,7 +81,7 @@ def plot_oracle_usage(oracle_df: pd.DataFrame) -> None:
     ax.set_title("Oracle Usage Counts")
     ax.tick_params(axis="x", rotation=30)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
-    st.pyplot(fig, use_container_width=True)
+    st.pyplot(fig)
 
 
 def plot_category_accuracy_delta(delta_df: pd.DataFrame) -> None:
@@ -99,7 +99,7 @@ def plot_category_accuracy_delta(delta_df: pd.DataFrame) -> None:
     ax.set_title("Category Accuracy Difference (Candidate - Baseline)")
     ax.tick_params(axis="x", rotation=30)
     ax.grid(axis="y", linestyle="--", alpha=0.3)
-    st.pyplot(fig, use_container_width=True)
+    st.pyplot(fig)
 
 
 def show_rate_table(oracle_df: pd.DataFrame) -> None:
@@ -108,4 +108,4 @@ def show_rate_table(oracle_df: pd.DataFrame) -> None:
 
     display_df = oracle_df.copy()
     display_df["pass_rate"] = display_df["pass_rate"].apply(pct)
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, hide_index=True)

@@ -16,7 +16,7 @@ def render_category_table(category_df: pd.DataFrame) -> None:
     display_df = category_df.copy()
     display_df["accuracy"] = display_df["accuracy"].apply(pct)
     display_df["average_latency_ms"] = display_df["average_latency_ms"].round(2)
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, hide_index=True)
 
 
 def render_error_table(error_df: pd.DataFrame) -> None:
@@ -24,7 +24,7 @@ def render_error_table(error_df: pd.DataFrame) -> None:
         st.info("No error table available.")
         return
 
-    st.dataframe(error_df, use_container_width=True, hide_index=True)
+    st.dataframe(error_df, hide_index=True)
 
 
 def render_problematic_cases(problem_df: pd.DataFrame) -> None:
@@ -40,7 +40,7 @@ def render_problematic_cases(problem_df: pd.DataFrame) -> None:
     if "avg_latency_ms" in display_df.columns:
         display_df["avg_latency_ms"] = display_df["avg_latency_ms"].round(2)
 
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(display_df, hide_index=True)
 
 
 def render_raw_results_table(raw_df: pd.DataFrame) -> None:
@@ -48,4 +48,4 @@ def render_raw_results_table(raw_df: pd.DataFrame) -> None:
         st.info("No rows match the current filters.")
         return
 
-    st.dataframe(raw_df, use_container_width=True, hide_index=True)
+    st.dataframe(raw_df, hide_index=True)

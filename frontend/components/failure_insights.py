@@ -29,7 +29,7 @@ def render_low_score_category_breakdown(run_rows: pd.DataFrame, low_accuracy_thr
     low_df = low_df.sort_values(["accuracy", "failed"], ascending=[True, False])
     display = low_df.copy()
     display["accuracy"] = display["accuracy"].apply(pct)
-    st.dataframe(display, use_container_width=True, hide_index=True)
+    st.dataframe(display, hide_index=True)
 
 
 def render_top_failure_causes_per_category(run_rows: pd.DataFrame, category: str, top_n: int = 5) -> None:
@@ -49,7 +49,7 @@ def render_top_failure_causes_per_category(run_rows: pd.DataFrame, category: str
         .sort_values(["count", "error_type"], ascending=[False, True])
         .head(top_n)
     )
-    st.dataframe(causes, use_container_width=True, hide_index=True)
+    st.dataframe(causes, hide_index=True)
 
 
 def render_failed_cases_table(run_rows: pd.DataFrame, category: str, top_n: int = 30) -> pd.DataFrame:
@@ -74,5 +74,5 @@ def render_failed_cases_table(run_rows: pd.DataFrame, category: str, top_n: int 
     ]
     columns = [column for column in columns if column in scoped.columns]
     scoped = scoped.sort_values(["score", "latency_ms"], ascending=[True, False]).head(top_n)
-    st.dataframe(scoped[columns], use_container_width=True, hide_index=True)
+    st.dataframe(scoped[columns], hide_index=True)
     return scoped

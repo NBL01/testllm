@@ -367,7 +367,7 @@ def main() -> None:
                             },
                         ]
                         metric_df = pd.DataFrame(metric_rows)
-                        st.dataframe(metric_df, use_container_width=True, hide_index=True)
+                        st.dataframe(metric_df, hide_index=True)
 
                         st.subheader("Category-wise Accuracy Delta")
                         plot_category_accuracy_delta(bundle.category_delta)
@@ -603,7 +603,7 @@ def _render_result_inspector_panel(
         "latency_ms",
     ]
     preview_columns = [col for col in preview_columns if col in inspector_rows.columns]
-    st.dataframe(inspector_rows[preview_columns], use_container_width=True, hide_index=True)
+    st.dataframe(inspector_rows[preview_columns], hide_index=True)
 
     ordered_result_ids = inspector_rows["result_id"].astype(str).tolist()
     selected_result_id = st.selectbox(
@@ -674,7 +674,7 @@ def _render_run_new_page(launcher: RunLauncher, runs_df: pd.DataFrame) -> None:
     preview = runs_df.copy()
     preview["created_at"] = pd.to_datetime(preview["created_at"], errors="coerce")
     preview = preview.sort_values(["created_at", "run_id"], ascending=[False, False]).head(12)
-    st.dataframe(preview[preview_columns], use_container_width=True, hide_index=True)
+    st.dataframe(preview[preview_columns], hide_index=True)
 
 
 def _render_model_comparison_page(
@@ -732,7 +732,7 @@ def _render_model_comparison_page(
         return
 
     summary_df = adapter.multi_run_model_summary_table(model_reports)
-    st.dataframe(summary_df, use_container_width=True, hide_index=True)
+    st.dataframe(summary_df, hide_index=True)
 
     with st.expander("Aggregation Method"):
         st.markdown(
@@ -772,7 +772,7 @@ def _render_model_comparison_page(
 
     st.subheader("Category-wise Delta (Median Aggregated)")
     plot_category_accuracy_delta(category_delta)
-    st.dataframe(category_delta, use_container_width=True, hide_index=True)
+    st.dataframe(category_delta, hide_index=True)
 
 
 def _render_dataset_studio_page(cases_df: pd.DataFrame, results_df: pd.DataFrame) -> None:
@@ -794,7 +794,7 @@ def _render_dataset_studio_page(cases_df: pd.DataFrame, results_df: pd.DataFrame
             .reset_index(name="count")
             .sort_values(["dataset_version", "test_source", "category"])
         )
-        st.dataframe(summary, use_container_width=True, hide_index=True)
+        st.dataframe(summary, hide_index=True)
 
     st.markdown("### 1) Generate Candidates")
     generation_categories = st.multiselect(
@@ -910,7 +910,7 @@ def _render_dataset_studio_page(cases_df: pd.DataFrame, results_df: pd.DataFrame
             "validation_error_count",
             "created_at",
         ]
-        st.dataframe(candidate_df[preview_cols], use_container_width=True, hide_index=True)
+        st.dataframe(candidate_df[preview_cols], hide_index=True)
 
         selected_candidate_id = st.selectbox(
             "Selected candidate",
@@ -959,7 +959,7 @@ def _render_dataset_studio_page(cases_df: pd.DataFrame, results_df: pd.DataFrame
         if events_df.empty:
             st.info("No review events yet.")
         else:
-            st.dataframe(events_df, use_container_width=True, hide_index=True)
+            st.dataframe(events_df, hide_index=True)
 
     st.divider()
     st.markdown("### 3) Promote Approved Candidates")
@@ -1073,7 +1073,7 @@ def _render_run_launcher(launcher: RunLauncher) -> None:
     limit_value = st.number_input("Optional test case limit (0 = no limit)", min_value=0, max_value=10000, value=0, step=1)
     notes = st.text_area("Run notes (optional)", value="")
 
-    if st.button("Start Evaluation Run", type="primary", use_container_width=False):
+    if st.button("Start Evaluation Run", type="primary"):
         request = LaunchRequest(
             dataset_path=dataset_path,
             run_name=run_name.strip() or "streamlit-run",
