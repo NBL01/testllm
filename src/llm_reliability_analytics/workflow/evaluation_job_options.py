@@ -75,10 +75,10 @@ def get_evaluation_job_options() -> EvaluationJobOptionsResponse:
             ),
             DatasetOption(
                 id="llm_eval_v2_300",
-                label="LLM eval v2 (300 cases, 7 categories, 5 oracle types)",
+                label="LLM eval v2 (300 synthetic cases, 7 categories, 5 oracle types)",
                 input_path="data/raw/llm_eval_dataset_v2_300.jsonl",
                 dataset_version="v2.0-demo",
-                evaluation_mode="regression",
+                evaluation_mode="exploratory",  # synthetic cases are not a regression baseline
             ),
             DatasetOption(
                 id="all_oracles_smoke",

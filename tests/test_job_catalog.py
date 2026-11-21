@@ -28,11 +28,14 @@ def test_options_expose_only_effective_oracle_profile(monkeypatch) -> None:
     assert payload["oracle_profiles"] == ["default"]
 
 
+SOURCE_MODE = {"synthetic": "exploratory"}
+
+
 def test_catalog_has_truthful_presets_and_retains_legacy_option_fields() -> None:
     payload = catalog.get_evaluation_job_options().model_dump()
     datasets = {entry["id"]: entry for entry in payload["datasets"]}
 
-    assert set(datasets) == {"sample_test_cases.jsonl", "regression_v1", "adversarial_v1"}
+    assert set(datasets) == {"sample_test_cases.jsonl", "regression_v1", "adversarial_v1", "llm_eval_v2_300", "all_oracles_smoke"}
     for entry in datasets.values():
         assert set(entry) == {"id", "label", "input_path", "dataset_version", "evaluation_mode"}
         assert entry["label"].strip()
@@ -40,7 +43,8 @@ def test_catalog_has_truthful_presets_and_retains_legacy_option_fields() -> None
         assert cases
         assert summary.invalid_rows == 0
         assert summary.dataset_versions == [entry["dataset_version"]]
-        assert set(summary.test_source_distribution) == {entry["evaluation_mode"]}
+        # Synthetic cases have no matching mode of their own; they are exploratory, never "regression".
+        assert {SOURCE_MODE.get(source, source) for source in summary.test_source_distribution} == {entry["evaluation_mode"]}
 
     sample = datasets["sample_test_cases.jsonl"]
     regression = datasets["regression_v1"]
