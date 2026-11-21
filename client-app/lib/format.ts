@@ -12,3 +12,9 @@ export function formatDate(value: string | null | undefined): string {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
+
+/** Milliseconds below a second, seconds above, so slow local models stay readable. */
+export function formatMs(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "n/a";
+  return value < 1000 ? `${value.toFixed(0)} ms` : `${(value / 1000).toFixed(1)} s`;
+}

@@ -9,7 +9,7 @@ import {
 } from "@/lib/api";
 import { saveDownload } from "@/lib/apiClient";
 import { useRemoteResource } from "@/lib/useRemoteResource";
-import { formatDate, formatPercent, rateTone } from "@/lib/format";
+import { formatDate, formatMs, formatPercent, rateTone } from "@/lib/format";
 import type { TraceRecord } from "@/lib/types";
 
 function asNumber(value: number | undefined, digits = 3): string {
@@ -226,11 +226,11 @@ function JobDetail({ jobId }: { jobId: string }) {
                 sub={summary.report.pass_at_k == null ? "needs 2+ attempts per case" : "cases passing at least once"} />
               {summary.report.schema_pass_rate != null && <Kpi label="Schema pass rate" value={formatPercent(summary.report.schema_pass_rate, 1)} sub={`${summary.report.schema_attempt_count ?? 0} json_schema attempts`} />}
               <Kpi label="Unique cases" value={summary.report.unique_test_cases ?? "Not reported"} sub={`${summary.report.total_test_cases} attempts`} />
-              <Kpi label="Latency p50 / p95" value={`${asNumber(summary.report.p50_latency_ms, 0)} / ${asNumber(summary.report.p95_latency_ms, 0)} ms`}
-                sub={job.provider === "mock" ? "simulated (mock)" : `mean ${asNumber(summary.report.average_latency_ms, 0)} ms`} />
+              <Kpi label="Latency p50 / p95" value={`${formatMs(summary.report.p50_latency_ms)} / ${formatMs(summary.report.p95_latency_ms)}`}
+                sub={job.provider === "mock" ? "simulated (mock)" : `mean ${formatMs(summary.report.average_latency_ms)}`} />
             </div>
             {!!summary.report.category_reports?.length && <>
-              <h3 className="section-title">Accuracy by category</h3>
+              <h3 className="section-title">Pass rate by category</h3>
               <Bars rows={[...summary.report.category_reports].sort((a, b) => a.accuracy - b.accuracy).map(item => ({
                 label: item.category, rate: item.accuracy, detail: `${formatPercent(item.accuracy)} · ${item.passed}/${item.total_test_cases}`
               }))} />

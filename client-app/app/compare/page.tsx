@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { compareRuns, listJobs } from "@/lib/api";
 import { ApiClientError } from "@/lib/apiClient";
-import { formatDate, formatPercent } from "@/lib/format";
+import { formatDate, formatMs, formatPercent } from "@/lib/format";
 import { useRemoteResource } from "@/lib/useRemoteResource";
 import type { CaseChange, EvaluationJob, MetricsReport, RunComparison } from "@/lib/types";
 
@@ -48,7 +48,7 @@ const METRICS: MetricRow[] = [
 
 function show(value: number | null | undefined, kind: MetricRow["kind"]): string {
   if (value == null || !Number.isFinite(value)) return "N/A";
-  return kind === "rate" ? formatPercent(value, 1) : kind === "ms" ? `${value.toFixed(0)} ms` : value.toFixed(3);
+  return kind === "rate" ? formatPercent(value, 1) : kind === "ms" ? formatMs(value) : value.toFixed(3);
 }
 
 function Delta({ before, after, kind, higherIsBetter }: { before?: number | null; after?: number | null; kind: MetricRow["kind"]; higherIsBetter: boolean }) {
