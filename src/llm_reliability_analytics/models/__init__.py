@@ -5,7 +5,6 @@ from llm_reliability_analytics.models.domain import (
     DifficultyLevel,
     ErrorTaxonomy,
     OracleType,
-    RunLevelReport,
     RunStatus,
     TestCase,
     TestResult,
@@ -21,5 +20,4 @@ __all__ = [
     "TestRun",
     "TestResult",
     "CategoryLevelReport",
-    "RunLevelReport",
 ]

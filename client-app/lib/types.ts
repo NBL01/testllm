@@ -72,9 +72,6 @@ export type JobSummaryResult = {
     failed: number;
     accuracy: number;
     average_latency_ms: number;
-    overall_reliability_score: number;
-    metric_version?: string;
-    repeated_case_count?: number;
     schema_case_count?: number;
     measurement_notes?: string[];
     latency_sources?: Record<string, number>;

@@ -175,7 +175,7 @@ def retry_evaluation_job_endpoint(job_id: str, request: EvaluationJobRetryReques
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except EvaluationJobConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:  # e.g. a legacy job whose settings fail current validation
+    except ValueError as exc:  # e.g. an older job whose settings fail current validation
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 

@@ -60,8 +60,8 @@ function Evidence({ trace }: { trace: TraceRecord }) {
       <p><strong>Error:</strong> {trace.error_type ?? "None recorded"}</p>
       <p><strong>Explanation:</strong> {trace.explanation ?? "Not recorded"}</p>
       <div className="form-grid">
-        <div><strong>Effective oracle configuration</strong><pre>{trace.oracle_config == null ? "Unavailable (legacy evidence)" : JSON.stringify(trace.oracle_config, null, 2)}</pre></div>
-        <div><strong>Oracle details</strong><pre>{trace.oracle_details == null ? "Unavailable (legacy evidence)" : JSON.stringify(trace.oracle_details, null, 2)}</pre></div>
+        <div><strong>Effective oracle configuration</strong><pre>{trace.oracle_config == null ? "Not recorded" : JSON.stringify(trace.oracle_config, null, 2)}</pre></div>
+        <div><strong>Oracle details</strong><pre>{trace.oracle_details == null ? "Not recorded" : JSON.stringify(trace.oracle_details, null, 2)}</pre></div>
       </div>
     </details>
   );
@@ -281,10 +281,7 @@ function JobDetail({ jobId }: { jobId: string }) {
             <details className="notes">
               <summary>How these metrics are computed</summary>
               <p className="meta">pass^k counts cases whose every one of k attempts passed (production consistency); pass@k counts cases with at least one pass (capability ceiling). Both are N/A unless every case has the same k of 2 or more attempts.</p>
-              <p className="meta">Legacy composite ({summary.report.metric_version ?? "unversioned"}): <code>{asNumber(summary.report.overall_reliability_score)}</code>. Kept for comparison with older runs; it blends weighted heuristics and is not a guarantee of reliability.</p>
-              <p className="meta">Repeatability: {summary.report.repeated_case_count == null ? "eligibility not reported" : summary.report.repeated_case_count === 0 ? "not measured (no repeated cases)" : `${summary.report.repeated_case_count} repeated cases eligible`}.</p>
-              <p className="meta">Schema compliance: {summary.report.schema_case_count == null ? "eligibility not reported" : summary.report.schema_case_count === 0 ? "not measured (no schema cases)" : `${summary.report.schema_case_count} schema cases eligible`}.</p>
-              <p className="meta">Latency sources: {Object.entries(summary.report.latency_sources ?? {}).map(([source, count]) => `${source}: ${count}`).join(", ") || "not reported"}. Counts are attempts. {job.provider === "mock" && "Mock latency is synthetic, not real model performance."}</p>
+              <p className="meta">Latency sources: {Object.entries(summary.report.latency_sources ?? {}).map(([source, count]) => `${source}: ${count}`).join(", ") || "not reported"} (attempt counts).</p>
               {!!summary.report.measurement_notes?.length && <ul className="meta">{summary.report.measurement_notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
             </details>
             {job.status !== "completed" && <p className="meta">Partial evaluation: these metrics are not a completed-run result.</p>}

@@ -34,7 +34,7 @@ function describeIssue(issue: string): string {
 
 type Outcome = { comparable: true; data: RunComparison } | { comparable: false; issues: string[] };
 
-type MetricRow = { label: string; value: (report: MetricsReport) => number | null | undefined; kind: "rate" | "ms" | "score"; higherIsBetter: boolean };
+type MetricRow = { label: string; value: (report: MetricsReport) => number | null | undefined; kind: "rate" | "ms"; higherIsBetter: boolean };
 
 const METRICS: MetricRow[] = [
   { label: "Pass rate", value: report => report.accuracy, kind: "rate", higherIsBetter: true },
@@ -42,22 +42,22 @@ const METRICS: MetricRow[] = [
   { label: "pass@k (any attempt passes)", value: report => report.pass_at_k, kind: "rate", higherIsBetter: true },
   { label: "Schema pass rate", value: report => report.schema_pass_rate, kind: "rate", higherIsBetter: true },
   { label: "Latency p50", value: report => report.p50_latency_ms, kind: "ms", higherIsBetter: false },
-  { label: "Latency p95", value: report => report.p95_latency_ms, kind: "ms", higherIsBetter: false },
-  { label: "Legacy composite (legacy-v1)", value: report => report.overall_reliability_score, kind: "score", higherIsBetter: true }
+  { label: "Latency p95", value: report => report.p95_latency_ms, kind: "ms", higherIsBetter: false }
 ];
 
 function show(value: number | null | undefined, kind: MetricRow["kind"]): string {
   if (value == null || !Number.isFinite(value)) return "N/A";
-  return kind === "rate" ? formatPercent(value, 1) : kind === "ms" ? formatMs(value) : value.toFixed(3);
+  return kind === "rate" ? formatPercent(value, 1) : formatMs(value);
 }
 
 function Delta({ before, after, kind, higherIsBetter }: { before?: number | null; after?: number | null; kind: MetricRow["kind"]; higherIsBetter: boolean }) {
   if (before == null || after == null) return <span className="meta">—</span>;
   const diff = after - before;
   // Below the displayed precision a change is noise, not a regression.
-  const precision = kind === "rate" ? 0.0005 : kind === "ms" ? 0.5 : 0.0005;
+  const precision = kind === "rate" ? 0.0005 : 0.5;
   if (Math.abs(diff) < precision) return <span className="meta">no change</span>;
-  const text = kind === "rate" ? `${diff > 0 ? "+" : ""}${(diff * 100).toFixed(1)} pts` : kind === "ms" ? `${diff > 0 ? "+" : ""}${diff.toFixed(0)} ms` : `${diff > 0 ? "+" : ""}${diff.toFixed(3)}`;
+  const sign = diff > 0 ? "+" : "";
+  const text = kind === "rate" ? `${sign}${(diff * 100).toFixed(1)} pts` : `${sign}${diff.toFixed(0)} ms`;
   return <span className={(diff > 0) === higherIsBetter ? "delta-good" : "delta-bad"}>{text}</span>;
 }
 

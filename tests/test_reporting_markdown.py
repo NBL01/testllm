@@ -20,19 +20,10 @@ def test_markdown_report_includes_required_sections(monkeypatch, tmp_path) -> No
 
     markdown_report = render_markdown_report(run_report_workflow(run_result.run_id))
 
-    assert "# LLM Reliability Report" in markdown_report
-    assert "## Executive Summary" in markdown_report
-    assert "## Core Metrics" in markdown_report
-    assert "## Category Breakdown" in markdown_report
-    assert "## Error Type Breakdown" in markdown_report
-    assert "## Latency Summary" in markdown_report
-    assert "## Consistency Summary" in markdown_report
-    assert "## Legacy Composite Score" in markdown_report
-    assert "| pass^k: cases passing all attempts | " in markdown_report
-    assert "(k=2)" in markdown_report
-    assert "## Conclusions" in markdown_report
-    assert "Total Test Cases" in markdown_report
-    assert "Passed" in markdown_report
-    assert "Failed" in markdown_report
-    assert "Accuracy" in markdown_report
-    assert "Overall Reliability Score" in markdown_report
+    for heading in ("# LLM Reliability Report", "## Summary", "## Metrics", "## Measurement Notes",
+                    "## Pass Rate by Category", "## Failure Types", "## Latency", "## Findings"):
+        assert heading in markdown_report, heading
+    assert "| pass^k: cases passing all attempts | " in markdown_report and "(k=2)" in markdown_report
+    assert "| Pass rate |" in markdown_report
+    for legacy in ("Legacy", "Overall Reliability Score", "Consistency Summary", "heuristic"):
+        assert legacy not in markdown_report, legacy

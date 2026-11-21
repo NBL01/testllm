@@ -46,7 +46,7 @@ def test_matched_stored_configuration_allows_comparison(client):
     assert payload["eligibility"] == {"eligible": True, "research_only": False, "issues": []}
     assert payload["baseline_report"]["accuracy"] == 0
     assert payload["candidate_report"]["accuracy"] == 1
-    assert payload["comparison_report"]["compared_runs"] == 2
+    assert "comparison_report" not in payload  # the legacy composite ranking is gone
     assert payload["case_changes"] == {"regressions": [], "improvements": [
         {"test_case_id": "case", "category": "math", "attempts": 1, "baseline_passed": 0, "candidate_passed": 1}]}
 

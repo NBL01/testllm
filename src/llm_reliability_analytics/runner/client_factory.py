@@ -53,5 +53,5 @@ def build_llm_client(
         mock_mode = "semi_random"
         failure_rate = 1.0
 
-    # Baseline and legacy model labels retain explicit direct-run mock settings.
+    # mock-baseline and other direct-run labels keep the caller's mock settings.
     return MockLLMClient(mode=mock_mode, seed=seed, failure_rate=failure_rate)

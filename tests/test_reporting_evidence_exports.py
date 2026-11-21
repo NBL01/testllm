@@ -69,10 +69,10 @@ def run_report():
 
 def test_markdown_discloses_metric_scope_provenance_and_target():
     output = markdown.render_markdown_report(run_report())
-    for text in ["legacy-v1", "mock-baseline", "Provider", "mock_simulated", "not measured",
-                 "Total Attempts", "Repeated Cases", "Schema Cases", "Schema Attempts", "0.40", "lenient"]:
-        assert text in output
-    assert "failures / 1000 attempts" in output
+    for text in ["mock-baseline", "Provider", "mock_simulated", "not measured", "| Attempts | 1 |",
+                 "Mock latency is simulated", "count unique cases"]:
+        assert text in output, text
+    assert "legacy" not in output.lower()
 
 
 def test_job_context_helper_accepts_mapping_and_escapes_untrusted_markdown():

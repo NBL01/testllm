@@ -196,7 +196,6 @@ def run_report_workflow(run_id: str) -> RunReportResult:
             results,
             run_id=run_id,
             dataset_version=summaries[0].dataset_version,
-            repetition_index=summaries[0].repetition_index,
         ),
     )
 
@@ -312,7 +311,6 @@ def _run_prepared_test_cases(
                 results,
                 run_id=run.id,
                 dataset_version=run.dataset_version,
-                repetition_index=run.repetition_index,
             ),
             storage_summary=summaries[0],
         )

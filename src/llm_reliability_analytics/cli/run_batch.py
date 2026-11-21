@@ -205,7 +205,7 @@ def main() -> None:
     print(
         f"  accuracy={result.report.accuracy:.3f} "
         f"average_latency_ms={result.report.average_latency_ms:.2f} "
-        f"overall_reliability_score={result.report.overall_reliability_score:.3f}"
+        f"pass_hat_k={result.report.pass_hat_k}"
     )
     if result.report.error_distribution:
         print(f"  errors={result.report.error_distribution}")

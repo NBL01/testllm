@@ -774,15 +774,6 @@ def _scored(case: str, score: float, category: str = "math") -> Result:
                   score=score, latency_ms=1.0)
 
 
-def test_coverage_counts_low_score_cases_once_and_zero_score_by_score() -> None:
-    from llm_reliability_analytics.analytics.coverage_metrics import compute_coverage_metrics
-
-    repeated = [_scored("only-case", 0.1) for _ in range(10)]
-    assert compute_coverage_metrics(repeated).low_score_cases == 1  # one case, ten attempts
-    partial_credit = [_scored("a", 0.75, "summary"), _scored("b", 0.75, "summary"), _scored("c", 0.0, "math")]
-    assert compute_coverage_metrics(partial_credit).zero_score_categories == 1  # only "math" scored zero
-
-
 def test_trace_replay_replays_each_failed_case_once_and_caps_distinct_cases(monkeypatch) -> None:
     from llm_reliability_analytics.datasets import trace_loader
 

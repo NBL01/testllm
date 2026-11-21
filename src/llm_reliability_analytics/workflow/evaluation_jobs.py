@@ -320,7 +320,7 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
     if job.status not in {"draft", "queued"} or job.linked_run_id:
         raise EvaluationJobConflictError(f"Evaluation job cannot run from status={job.status}: {job_id}")
     if not job.dataset_snapshot:
-        raise ValueError("Legacy job has no dataset snapshot. Duplicate it to validate current inputs.")
+        raise ValueError("This job was created before dataset snapshots existed. Duplicate it to freeze current inputs.")
     run_id = str(uuid4())
     seed = 42
     started_at = datetime.now(timezone.utc)
@@ -448,7 +448,7 @@ def start_job(job_id: str) -> EvaluationJob:
     """Queue a draft (a queued job stays queued) and schedule it; returns before execution."""
     job = get_job(job_id)
     if job.status in {"draft", "queued"} and not job.linked_run_id and not job.dataset_snapshot:
-        raise ValueError("Legacy job has no dataset snapshot. Duplicate it to validate current inputs.")
+        raise ValueError("This job was created before dataset snapshots existed. Duplicate it to freeze current inputs.")
     queued = queue_job(job_id)
     _schedule(job_id)
     return queued

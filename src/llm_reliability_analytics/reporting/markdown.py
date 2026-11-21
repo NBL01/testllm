@@ -14,65 +14,27 @@ if TYPE_CHECKING:
 
 
 def render_markdown_report(run_report: RunReportResult) -> str:
-    """Render a clean Markdown report suitable for demo/defense presentation."""
+    """Render the run report shared by the client export and the batch CLI."""
     report = run_report.report
     summary = run_report.storage_summary
-
-    lines: list[str] = []
-    lines.append("# LLM Reliability Report")
-    lines.append("")
-    lines.append(f"- Run ID: `{run_report.run_id}`")
-    lines.append(f"- Dataset Version: `{summary.dataset_version}`")
-    lines.append(f"- Repetition Index: `{summary.repetition_index}`")
-    lines.append(f"- Provider: {_markdown_text(summary.provider or 'unknown')}")
-    lines.append(f"- Model: {_markdown_text(summary.model_name or 'unknown')}")
-    lines.append(f"- Model Version: {_markdown_text(summary.model_version or 'unknown')}")
-    lines.append(f"- Execution Mode: {_markdown_text(summary.mode)}")
-    lines.append(f"- Evaluation Mode: {_markdown_text(summary.evaluation_mode)}")
-    lines.append(f"- Configured Repeat Count: {summary.repeat_count}")
-    lines.append(f"- Generated At (UTC): `{_utc_now_iso()}`")
-    lines.append("")
-    lines.append("## Executive Summary")
-    lines.append("")
-    lines.append(_build_executive_summary(report))
-    lines.append("")
-    lines.append("## Core Metrics")
-    lines.append("")
-    lines.extend(_build_core_metrics_table(report))
-    lines.append("")
-    lines.append("## Measurement Scope")
-    lines.append("")
-    lines.append(f"- Metric Version: `{report.metric_version}`")
-    lines.append(f"- Repeated Cases (at least two attempts): {report.repeated_case_count}")
-    lines.append(f"- Schema Cases (unique, configured): {report.schema_case_count}")
-    lines.append(f"- Schema Attempts (configured): {report.schema_attempt_count}")
-    lines.extend(f"- {note}" for note in report.measurement_notes)
-    lines.append("")
-    lines.append("## Category Breakdown")
-    lines.append("")
-    lines.extend(_build_category_breakdown(report))
-    lines.append("")
-    lines.append("## Error Type Breakdown")
-    lines.append("")
-    lines.extend(_build_error_breakdown(report))
-    lines.append("")
-    lines.append("## Latency Summary")
-    lines.append("")
-    lines.extend(_build_latency_summary(report))
-    lines.append("")
-    lines.append("## Consistency Summary")
-    lines.append("")
-    lines.extend(_build_consistency_summary(report))
-    lines.append("")
-    lines.append("## Legacy Composite Score")
-    lines.append("")
-    lines.append(f"- Overall Reliability Score ({report.metric_version} composite, kept for comparison with older runs): "
-                 f"**{report.overall_reliability_score:.3f}**")
-    lines.append("")
-    lines.append("## Conclusions")
-    lines.append("")
-    lines.extend(_build_conclusions(report))
-
+    lines = [
+        "# LLM Reliability Report", "",
+        f"- Run ID: `{run_report.run_id}`",
+        f"- Dataset Version: `{summary.dataset_version}`",
+        f"- Provider: {_markdown_text(summary.provider or 'unknown')}",
+        f"- Model: {_markdown_text(summary.model_name or 'unknown')}",
+        f"- Execution Mode: {_markdown_text(summary.mode)}",
+        f"- Evaluation Mode: {_markdown_text(summary.evaluation_mode)}",
+        f"- Repeat Count: {summary.repeat_count}",
+        f"- Generated At (UTC): `{_utc_now_iso()}`",
+        "", "## Summary", "", _build_executive_summary(report),
+        "", "## Metrics", "", *_build_core_metrics_table(report),
+        "", "## Measurement Notes", "", *(f"- {note}" for note in report.measurement_notes),
+        "", "## Pass Rate by Category", "", *_build_category_breakdown(report),
+        "", "## Failure Types", "", *_build_error_breakdown(report),
+        "", "## Latency", "", *_build_latency_summary(report),
+        "", "## Findings", "", *_build_findings(report),
+    ]
     return "\n".join(lines).strip() + "\n"
 
 
@@ -120,11 +82,10 @@ def _build_core_metrics_table(report: ReliabilityReport) -> list[str]:
     return [
         "| Metric | Value |",
         "| --- | ---: |",
-        f"| Total Attempts (legacy Total Test Cases) | {report.total_test_cases} |",
-        f"| Unique Test Cases | {report.unique_test_cases} |",
-        f"| Passed | {report.passed} |",
-        f"| Failed | {report.failed} |",
-        f"| Accuracy (pass rate over attempts) | {_pct(report.accuracy)} |",
+        f"| Attempts | {report.total_test_cases} |",
+        f"| Unique test cases | {report.unique_test_cases} |",
+        f"| Passed / failed attempts | {report.passed} / {report.failed} |",
+        f"| Pass rate | {_pct(report.accuracy)} |",
         f"| pass^k: cases passing all attempts | {_optional_pct(report.pass_hat_k, report.repeat_k)} |",
         f"| pass@k: cases passing at least once | {_optional_pct(report.pass_at_k, report.repeat_k)} |",
         f"| Schema-only pass rate | {'not measured (no json_schema attempts)' if report.schema_pass_rate is None else _pct(report.schema_pass_rate)} |",
@@ -139,86 +100,39 @@ def _optional_pct(value: float | None, k: int | None) -> str:
 def _build_category_breakdown(report: ReliabilityReport) -> list[str]:
     if not report.category_reports:
         return ["No category-level data available."]
-
-    lines = [
-        "| Category | Attempts | Passed | Failed | Accuracy | Avg Latency (ms) |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
-    ]
-    ordered = sorted(
-        report.category_reports,
-        key=lambda item: (item.accuracy, -item.failed, item.category),
-    )
-    for item in ordered:
-        lines.append(
-            f"| {_markdown_text(item.category)} | {item.total_test_cases} | {item.passed} | "
-            f"{item.failed} | {_pct(item.accuracy)} | {item.average_latency_ms:.2f} |"
-        )
+    lines = ["| Category | Attempts | Passed | Failed | Pass rate | Avg latency (ms) |", "| --- | ---: | ---: | ---: | ---: | ---: |"]
+    for item in sorted(report.category_reports, key=lambda item: (item.accuracy, -item.failed, item.category)):
+        lines.append(f"| {_markdown_text(item.category)} | {item.total_test_cases} | {item.passed} | "
+                     f"{item.failed} | {_pct(item.accuracy)} | {item.average_latency_ms:.2f} |")
     return lines
 
 
 def _build_error_breakdown(report: ReliabilityReport) -> list[str]:
     if not report.error_distribution:
-        return ["No explicit error types were recorded in this run."]
-
-    lines = [
-        "| Error Type | Count | Rate |",
-        "| --- | ---: | ---: |",
-    ]
-    ordered_errors = sorted(report.error_distribution.items(), key=lambda item: (-item[1], item[0]))
-    for error_type, count in ordered_errors:
-        rate = count / report.total_test_cases if report.total_test_cases else 0.0
-        lines.append(f"| {_markdown_text(error_type)} | {count} | {_pct(rate)} |")
+        return ["No failure types were recorded in this run."]
+    lines = ["| Failure type | Attempts | Share of attempts |", "| --- | ---: | ---: |"]
+    for error_type, count in sorted(report.error_distribution.items(), key=lambda item: (-item[1], item[0])):
+        lines.append(f"| {_markdown_text(error_type)} | {count} | {_pct(count / report.total_test_cases if report.total_test_cases else 0.0)} |")
     return lines
 
 
 def _build_latency_summary(report: ReliabilityReport) -> list[str]:
     return [
-        f"- Average Latency: **{report.average_latency_ms:.2f} ms**",
-        f"- P50 Latency: **{report.p50_latency_ms:.2f} ms**",
-        f"- P95 Latency: **{report.p95_latency_ms:.2f} ms**",
-        f"- Failure Density: **{report.failure_density_per_1000:.2f} failures / 1000 attempts**",
-        "- Latency Sources (attempt counts): " + (
-            ", ".join(f"{source}: {count}" for source, count in sorted(report.latency_sources.items()))
-            or "not measured"
-        ),
+        f"- Mean / p50 / p95: **{report.average_latency_ms:.2f} / {report.p50_latency_ms:.2f} / {report.p95_latency_ms:.2f} ms**",
+        "- Sources (attempt counts): " + (
+            ", ".join(f"{source}: {count}" for source, count in sorted(report.latency_sources.items())) or "not measured"),
     ]
 
 
-def _build_consistency_summary(report: ReliabilityReport) -> list[str]:
+def _build_findings(report: ReliabilityReport) -> list[str]:
+    if not report.total_test_cases:
+        return ["- No attempts were recorded."]
+    weakest = min(report.category_reports, key=lambda item: (item.accuracy, -item.failed), default=None)
+    top_error = max(report.error_distribution.items(), key=lambda item: item[1], default=None)
     return [
-        f"- Consistency Score: **{report.consistency_score:.3f}**",
-        f"- Repeatability Score (legacy heuristic): **{report.repeatability_score:.3f}**"
-        + ("; repeatability not measured" if not report.repeated_case_count else ""),
-        f"- Unstable Cases: **{report.unstable_case_count}**",
-        f"- Schema Compliance Rate (legacy all-attempt heuristic): **{_pct(report.schema_compliance_rate)}**"
-        + ("; schema validation not measured" if not report.schema_attempt_count else ""),
-        f"- Critical Error Rate: **{_pct(report.critical_error_rate)}**",
+        f"- Weakest category: **{_markdown_text(weakest.category)}** ({_pct(weakest.accuracy)} pass rate)." if weakest else "- No categories recorded.",
+        f"- Most frequent failure type: **{_markdown_text(top_error[0])}** ({top_error[1]} attempts)." if top_error else "- No failures recorded.",
     ]
-
-
-def _build_conclusions(report: ReliabilityReport) -> list[str]:
-    top_weak = report.weakest_categories[0].category if report.weakest_categories else "n/a"
-    top_error = (
-        report.most_frequent_error_types[0].error_type
-        if report.most_frequent_error_types
-        else "none"
-    )
-
-    reliability_band = _reliability_band(report.overall_reliability_score)
-    return [
-        f"- The current run is in the **{reliability_band}** legacy heuristic band, not a validated deployment recommendation.",
-        f"- The weakest category is **{_markdown_text(top_weak)}** and should be prioritized for prompt/oracle refinement.",
-        f"- The most frequent error type is **{_markdown_text(top_error)}**; reducing this error will likely improve overall reliability fastest.",
-        "- Next iteration should target high-failure categories while preserving low latency and repeatable behavior.",
-    ]
-
-
-def _reliability_band(score: float) -> str:
-    if score >= 0.85:
-        return "high"
-    if score >= 0.65:
-        return "moderate"
-    return "low"
 
 
 def _pct(value: float) -> str:

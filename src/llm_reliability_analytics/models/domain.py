@@ -126,27 +126,3 @@ class CategoryLevelReport(BaseModel):
     average_latency_ms: float = Field(ge=0.0)
 
 
-class RunLevelReport(BaseModel):
-    run_id: str
-    dataset_version: str
-    repetition_index: int = Field(ge=1)
-    total_test_cases: int = Field(ge=0)
-    unique_test_cases: int = Field(default=0, ge=0)
-    attempts_per_case: float = Field(default=1.0, ge=0.0)
-    passed: int = Field(ge=0)
-    failed: int = Field(ge=0)
-    accuracy: float = Field(ge=0.0, le=1.0)
-    average_latency_ms: float = Field(ge=0.0)
-    p95_latency_ms: float = Field(default=0.0, ge=0.0)
-    consistency_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    repeatability_score: float = Field(default=0.0, ge=0.0, le=1.0)
-    schema_compliance_rate: float = Field(default=0.0, ge=0.0, le=1.0)
-    critical_error_rate: float = Field(default=0.0, ge=0.0, le=1.0)
-    failure_density_per_1000: float = Field(default=0.0, ge=0.0)
-    category_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
-    source_coverage: int = Field(default=0, ge=0)
-    failure_concentration: float = Field(default=0.0, ge=0.0, le=1.0)
-    zero_score_categories: int = Field(default=0, ge=0)
-    low_score_cases: int = Field(default=0, ge=0)
-    unstable_case_count: int = Field(default=0, ge=0)
-    error_taxonomy_distribution: dict[str, int] = Field(default_factory=dict)

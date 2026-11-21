@@ -72,7 +72,7 @@ queue processing, backup/restore, failure recovery, and isolated verification.
 Job creation validates and freezes the effective case inputs and records
 `dataset_sha256`. It hashes the normalized case snapshot after limits/version
 resolution, not the original file bytes. Later file edits do not change that job.
-Retry and duplicate preserve a saved snapshot and hash; legacy jobs without one
+Retry and duplicate preserve a saved snapshot and hash; older jobs without one
 are revalidated against current source inputs before a new snapshot is created.
 
 ## Providers and Datasets
@@ -149,9 +149,8 @@ Headline metrics are disaggregated:
 - **Schema-only pass rate** (pass rate on `json_schema` attempts only)
 - **Latency p50 and p95**
 
-`pass^k` and `pass@k` are N/A unless every case has the same k ≥ 2 attempts.
-The legacy-v1 composite ("overall reliability score") is still computed and shown, labelled
-"Legacy composite", only for comparing with older runs; it is not the main score.
+`pass^k` and `pass@k` are N/A unless every case has the same k ≥ 2 attempts. There is
+no composite score: each number answers one question and is shown with its denominator.
 
 Cases marked `strict_output` (as throughout the v2 benchmark) demand only the answer.
 `numeric_tolerance` fails anything but a bare number, and `exact_match` fails an answer
@@ -163,11 +162,9 @@ are refused rather than shown as regressions.
 
 Comparison eligibility checks persisted settings, dataset hash, and case/attempt-keyed oracle configuration.
 Unknown configuration evidence is `research_only` and excluded from comparisons.
-Read `measurement_notes`, `repeated_case_count`, `schema_case_count`,
-`schema_attempt_count`, and `latency_sources` with the headline metrics.
-A singleton's legacy repeatability score is not measured repeatability; the legacy
-schema heuristic is not a schema-only pass rate. Per-model synthetic medians no longer exist.
-Missing legacy configuration evidence limits comparability even when dataset labels match.
+Read `measurement_notes`, `schema_case_count`, `schema_attempt_count`, and
+`latency_sources` with the headline metrics. Runs without recorded oracle configuration
+cannot be compared, even when dataset labels match.
 
 CSV exports all stored failed attempts, with quoted fields and spreadsheet-formula
 neutralization; it has no 5,000-row sample cap. JSON explicitly supplies

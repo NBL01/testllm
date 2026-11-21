@@ -11,11 +11,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from llm_reliability_analytics.analytics.reliability import (
-    ReliabilityReport,
-    compute_reliability_report,
-    compute_run_comparison_report,
-)
+from llm_reliability_analytics.analytics.reliability import ReliabilityReport, compute_reliability_report
 from llm_reliability_analytics.models.domain import TestResult
 from llm_reliability_analytics.storage.db import get_connection, get_db_path
 from llm_reliability_analytics.storage.duckdb_store import fetch_results_for_run
@@ -72,7 +68,6 @@ def _metric_context(run_ids: list[str]) -> tuple[dict[str, dict], dict[str, list
 def _report_for(run_id: str, runs: dict[str, dict], results: dict[str, list[TestResult]]) -> ReliabilityReport:
     return compute_reliability_report(
         results[run_id], run_id=run_id, dataset_version=runs[run_id]["dataset_version"],
-        repetition_index=runs[run_id]["repetition_index"],
     )
 
 
@@ -170,6 +165,5 @@ def metrics_compare(request: MetricsRequest) -> dict[str, Any]:
         "eligibility": eligibility,
         "baseline_report": reports[0],
         "candidate_report": reports[1],
-        "comparison_report": compute_run_comparison_report(reports, baseline_run_id=request.run_ids[0]),
         "case_changes": _case_changes(results[request.run_ids[0]], results[request.run_ids[1]]),
     }

@@ -146,13 +146,9 @@ Headline metrics are disaggregated:
 - **Schema-only pass rate** (pass rate on `json_schema` attempts only)
 - **Latency p50 and p95**
 
-`pass^k` and `pass@k` are N/A unless every case has the same k ≥ 2 attempts.
-The legacy-v1 composite (`overall_reliability_score`) preserves historical numeric heuristic
-behavior and is still computed and shown, labelled "Legacy composite", only for comparing
-with older runs; it is not the main score. Reports distinguish attempt counts from unique
-cases and expose repeat/schema eligibility and latency sources. Singleton repeatability and
-all-attempt schema compliance must not be interpreted as empirical repeatability or schema-only
-success rates.
+`pass^k` and `pass@k` are N/A unless every case has the same k ≥ 2 attempts. There is
+no composite score. Reports distinguish attempt counts from unique cases, report latency
+provenance per attempt, and add per-category and per-oracle pass rates and failure types.
 
 Comparison lives in the Next.js client at `/compare` (also linked from completed jobs):
 select baseline and candidate completed jobs to view metric deltas, pass rate by

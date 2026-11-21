@@ -90,7 +90,7 @@ Supported providers:
 Job creation saves the effective normalized case snapshot and SHA-256. The hash
 describes the snapshot after limit and version resolution, not source-file bytes.
 Retry and duplicate preserve an existing snapshot and hash in the new linked draft.
-Legacy jobs without a snapshot validate current source inputs before creating a new
+Older jobs without a snapshot validate current source inputs before creating a new
 snapshot, so they cannot promise frozen retry until that succeeds.
 
 Execution is asynchronous: `POST /evaluation-jobs/{job_id}/run` returns HTTP 202 immediately;
@@ -226,10 +226,8 @@ Headline metrics are disaggregated:
 - **Schema-only pass rate** (pass rate on `json_schema` attempts only)
 - **Latency p50 and p95**
 
-`pass^k` and `pass@k` are N/A unless every case has the same k ≥ 2 attempts.
-The legacy-v1 composite (`overall_reliability_score`) preserves historical score
-semantics and is still computed and shown, labelled "Legacy composite", only for
-comparing with older runs; it is not the main score.
+`pass^k` and `pass@k` are N/A unless every case has the same k ≥ 2 attempts. There is
+no composite score.
 
 Comparison lives in the Next.js client at `/compare` (also linked from completed jobs):
 select baseline and candidate completed jobs to view metric deltas, pass rate by
@@ -240,10 +238,8 @@ evaluation mode, per-case oracle configuration, temperature, max tokens, repeat 
 timeout, seed, or case coverage), and the page explains the reasons. Provider and mode
 may differ only when both runs are real executions (`ollama` vs `openai_compatible`);
 comparing mock against real is refused. Unknown configuration evidence is marked
-`research_only` and excluded from comparisons. Read measurement notes and coverage counts
-alongside headline values: singleton repeatability is not measured repeated behavior, the
-historical schema heuristic is not a schema-only pass rate, and mock latency is not a real
-provider benchmark. Per-model synthetic medians no longer exist.
+`research_only` and excluded from comparisons. Read the measurement notes alongside the
+headline values; mock latency is simulated, not a real provider benchmark.
 
 ## Isolated verification
 

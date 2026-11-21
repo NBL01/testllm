@@ -32,8 +32,7 @@ const job = {
 };
 const report = {
   total_test_cases: 6, unique_test_cases: 3, passed: 4, failed: 2, accuracy: 2 / 3,
-  average_latency_ms: 12, overall_reliability_score: 0.7, metric_version: 'legacy-v1',
-  repeated_case_count: 3, schema_case_count: 1, measurement_notes: ['Scope is limited to dataset oracle checks.'],
+  average_latency_ms: 12, schema_case_count: 1, measurement_notes: ['Scope is limited to dataset oracle checks.'],
   latency_sources: { mock_simulated: 4, observed: 2 },
   category_reports: [{ category: 'math', total_test_cases: 4, passed: 4, failed: 0, accuracy: 1 },
     { category: 'safety', total_test_cases: 2, passed: 0, failed: 2, accuracy: 0 }],
@@ -70,15 +69,13 @@ test('detail renders backend unique_test_cases and latency source count dictiona
   assert.match(html, /Unique cases<\/div><div class="kpi-value">3<\/div>/);
   assert.match(html, /mock_simulated: 4/);
   assert.match(html, /observed: 2/);
-  assert.match(html, /3 repeated cases eligible/);
-  assert.match(html, /1 schema cases eligible/);
   assert.match(html, /Scope is limited to dataset oracle checks/);
   assert.match(html, /2x repeat · temp 0 · 128 tokens/);
   assert.match(html, /Run the same evaluation with another model/);
   assert.match(html, />Create Comparable Draft<\/button>/);
   assert.match(html, /pass\^2<\/div><div class="kpi-value">50.0%/);
   assert.match(html, /pass@2<\/div><div class="kpi-value">100.0%/);
-  assert.match(html, /Legacy composite \(legacy-v1\): <code>0.700/);
+  assert.doesNotMatch(html, /[Ll]egacy|composite|heuristic/);  // the legacy-v1 composite is gone
   // Failure triage chips: one per error type and per failing category, with counts.
   assert.match(html, /aria-label="Filter failed attempts"/);
   assert.match(html, />wrong_answer<span class="chip-count">2<\/span>/);
@@ -126,11 +123,9 @@ test('job list shows run outcomes, queue count and only recorded owner metadata'
 });
 
 test('zero eligible cases are not measured and markdown failure cannot hide metrics or CSV', () => {
-  const html = renderDetail({ ...report, repeated_case_count: 0, schema_case_count: 0, latency_sources: {},
+  const html = renderDetail({ ...report, schema_case_count: 0, latency_sources: {},
     repeat_k: null, pass_at_k: null, pass_hat_k: null }, { report: 'Report unavailable' });
   assert.match(html, /pass\^k<\/div><div class="kpi-value">N\/A<\/div><div class="kpi-sub">needs 2\+ attempts per case/);
-  assert.match(html, /not measured \(no repeated cases\)/);
-  assert.match(html, /not measured \(no schema cases\)/);
   assert.match(html, /Latency sources: not reported/);
   assert.match(html, /Report unavailable/);
   assert.match(html, /Download All Failed Attempts .csv/);

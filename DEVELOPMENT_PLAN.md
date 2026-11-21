@@ -31,7 +31,7 @@ These are source-level capabilities, not blanket acceptance claims.
 | Queue | Enqueue timestamps, stable ordering, per-job outcomes, contention skips without failure/counting; async scheduling (POST `/evaluation-jobs/process-queue` returns 202; `?wait=true` for synchronous); HTTP-only CLI passing `wait=true` |
 | Catalog and validation | Backend-listed datasets, mock modes, native Ollama (`127.0.0.1:11434`), and `openai_compatible` endpoints (env-configured base URL and key, free-text models); only dataset-defined default oracle profile |
 | Evidence | Original expected/actual answer and oracle configuration; replay review requirement for incomplete legacy data |
-| Metrics | Disaggregated headline metrics: pass rate, pass^k, pass@k, schema-only pass rate, latency p50/p95; pass^k/pass@k N/A unless every case has k ≥ 2 attempts; legacy composite labelled 'Legacy composite' for older runs; per-model synthetic medians removed |
+| Metrics | Disaggregated headline metrics: pass rate, pass^k, pass@k, schema-only pass rate, latency p50/p95; pass^k/pass@k N/A unless every case has k ≥ 2 attempts; no composite score |
 | Comparison | Client comparison at `/compare` using POST `/internal/metrics/eligibility` and `/internal/metrics/compare`; 409 rejection on configuration/coverage mismatches; real-to-real provider variation permitted (`ollama` vs `openai_compatible`); mock vs real refused; metric deltas, category pass rates, regressions/improvements |
 | Exports | Markdown context, labeled JSON samples, full quoted/formula-neutralized failed-attempt CSV |
 | Internal boundary | POST `/internal/metrics/eligibility` and POST `/internal/metrics/compare`; unused internal/admin routes removed; candidate generation and direct batch runs preserved as offline CLI modules |
@@ -94,9 +94,8 @@ and the automated part of item 6; manual accessibility checks, goal-by-goal evid
   (`llm_reliability_analytics.cli.run_batch`, `llm_reliability_analytics.cli.generate_candidates`).
 - CSV assembles output in memory. Scaling requires deliberate pagination/streaming work,
   not an untested deployment claim.
-- Legacy composite scores preserve earlier numeric semantics and are labelled 'Legacy composite'
-  only for comparison with older runs. Headline metrics are disaggregated (pass rate, pass^k,
-  pass@k, schema pass rate, p50/p95 latency).
+- Metrics are disaggregated (pass rate, pass^k, pass@k, schema pass rate, p50/p95 latency);
+  the earlier weighted composite and its heuristics were removed.
 - Backend-visible dataset paths, candidate exports and unauthenticated actions are
   intended only for trusted local operators.
 - Older V2 documents describe historical ambitions; their timelines and numerical
