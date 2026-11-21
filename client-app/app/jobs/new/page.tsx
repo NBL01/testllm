@@ -6,6 +6,7 @@ import { createJob, getHealth, getJobOptions, getModels } from "@/lib/api";
 import { API_BASE_URL, ApiClientError } from "@/lib/apiClient";
 import type { JobOptionsResponse, ModelsResponse } from "@/lib/types";
 import { validateJobNumbers } from "@/lib/jobForm";
+import { Notice, PageHeader } from "@/app/ui";
 
 type Provider = "mock" | "ollama" | "local" | "openai_compatible";
 const PROVIDER_LABELS: Record<string, string> = { openai_compatible: "OpenAI-compatible API" };
@@ -294,17 +295,11 @@ export default function NewJobPage() {
 
   return (
     <main className="page">
-      <section className="hero">
-        <div>
-          <h1>Create Evaluation Job</h1>
-          <p>Define one evaluation request. Create a draft job, then review and run it from the job detail page.</p>
-        </div>
-        <Link className="btn btn-secondary" href="/jobs">
-          Back to Jobs
-        </Link>
-      </section>
+      <PageHeader title="Create Evaluation Job" subtitle="Define one evaluation request. Create a draft job, then review and run it from the job detail page.">
+        <Link className="btn btn-secondary" href="/jobs">Back to Jobs</Link>
+      </PageHeader>
 
-      <section className="panel grid" style={{ marginBottom: "1rem" }}>
+      <section className="panel grid">
         <div className="panel-head">
           <h2>System Status</h2>
           <button className="btn btn-secondary" type="button" disabled={loadingOptions || submitting || !!successJobId}
@@ -345,7 +340,7 @@ export default function NewJobPage() {
         {loadingOptions && <p className="meta">Loading provider/model/dataset options...</p>}
         <fieldset className="grid form-fields" disabled={submitting || !!successJobId}>
         <section className="grid">
-          <h2 style={{ margin: 0 }}>Evaluation Target</h2>
+          <h2>Evaluation Target</h2>
           <div className="form-grid">
             <label>
               Provider
@@ -414,7 +409,7 @@ export default function NewJobPage() {
         </section>
 
         <section className="grid">
-          <h2 style={{ margin: 0 }}>Dataset and Oracle</h2>
+          <h2>Dataset and Oracle</h2>
           <div className="form-grid">
             <label>
               Dataset source
@@ -462,7 +457,7 @@ export default function NewJobPage() {
           </div>
           <p className="meta">Default is metadata only: scoring uses each dataset case&apos;s oracle type and configuration.</p>
           {datasetSource === "custom" && (
-            <label style={{ marginTop: "0.6rem" }}>
+            <label>
               Custom dataset path
               <input
                 className="input"
@@ -478,7 +473,7 @@ export default function NewJobPage() {
         </section>
 
         <section className="grid">
-          <h2 style={{ margin: 0 }}>Run Settings</h2>
+          <h2>Run Settings</h2>
           <div className="form-grid">
             <label>
               Repeat count
@@ -541,7 +536,7 @@ export default function NewJobPage() {
         </section>
 
         <section className="grid">
-          <h2 style={{ margin: 0 }}>Client Metadata</h2>
+          <h2>Client Metadata</h2>
           <div className="form-grid">
             <label>
               Submitted by
@@ -589,45 +584,26 @@ export default function NewJobPage() {
         </fieldset>
 
         {validationErrors.length > 0 && (
-          <div className="panel" aria-live="polite" style={{ borderColor: "#f0c3c3" }}>
-            <strong>Form validation</strong>
-            {validationErrors.map((item) => (
-              <p className="error" key={item} style={{ margin: "0.35rem 0 0" }}>
-                {item}
-              </p>
-            ))}
-          </div>
+          <Notice tone="error" title="Form validation" aria-live="polite">
+            {validationErrors.map((item) => <p className="error" key={item}>{item}</p>)}
+          </Notice>
         )}
 
         {apiError && (
-          <div className="panel" role="alert" style={{ borderColor: "#f0c3c3", background: "#fff7f7" }}>
-            <strong className="error">{apiError.title}</strong>
-            <p className="meta" style={{ margin: "0.35rem 0 0" }}>
-              Likely cause: {apiError.likelyCause}
-            </p>
-            <p className="meta" style={{ margin: "0.35rem 0 0" }}>
-              Technical detail: <code>{apiError.technicalDetail}</code>
-            </p>
-            {apiError.suggestedCommand && (
-              <p className="meta" style={{ margin: "0.35rem 0 0" }}>
-                Suggested command: <code>{apiError.suggestedCommand}</code>
-              </p>
-            )}
-          </div>
+          <Notice tone="error" title={apiError.title} role="alert">
+            <p className="meta">Likely cause: {apiError.likelyCause}</p>
+            <p className="meta">Technical detail: <code>{apiError.technicalDetail}</code></p>
+            {apiError.suggestedCommand && <p className="meta">Suggested command: <code>{apiError.suggestedCommand}</code></p>}
+          </Notice>
         )}
 
         {successJobId && (
-          <div className="panel" role="status" style={{ borderColor: "#b5e6ce", background: "#f4fff8" }}>
-            <strong className="success">Draft evaluation job created.</strong>
-            <p className="meta" style={{ margin: "0.35rem 0 0" }}>
-              job_id: <code>{successJobId}</code>
-            </p>
-            <div className="btn-row" style={{ marginTop: "0.6rem" }}>
-              <Link className="btn btn-primary" href={`/jobs/${successJobId}`}>
-                View Job
-              </Link>
+          <Notice tone="success" title="Draft evaluation job created." role="status">
+            <p className="meta">job_id: <code>{successJobId}</code></p>
+            <div className="btn-row">
+              <Link className="btn btn-primary" href={`/jobs/${successJobId}`}>View Job</Link>
             </div>
-          </div>
+          </Notice>
         )}
 
         <div className="btn-row">

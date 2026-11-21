@@ -7,6 +7,7 @@ import { compareRuns, getJob, listJobs } from "@/lib/api";
 import { ApiClientError } from "@/lib/apiClient";
 import { formatDate, formatMs, formatPercent } from "@/lib/format";
 import { useRemoteResource } from "@/lib/useRemoteResource";
+import { PageHeader, StatusPill } from "@/app/ui";
 import type { CaseChange, EvaluationJob, MetricsReport, RunComparison } from "@/lib/types";
 
 const ISSUE_TEXT: Record<string, string> = {
@@ -167,12 +168,8 @@ function Compare() {
 
   return (
     <main className="page">
-      <section className="hero">
-        <div>
-          <h1>Compare Runs</h1>
-          <p>Put two completed jobs side by side. Only runs with the same frozen dataset, oracle configuration and generation settings are compared.</p>
-        </div>
-      </section>
+      <PageHeader title="Compare Runs"
+        subtitle="Put two completed jobs side by side. Only runs with the same frozen dataset, oracle configuration and generation settings are compared." />
 
       <section className="panel grid">
         <div className="form-grid">
@@ -182,8 +179,8 @@ function Compare() {
         <div className="btn-row">
           <button className="btn btn-secondary" type="button" disabled={!baselineId && !candidateId}
             onClick={() => updateSelection(candidateId, baselineId)}>Swap</button>
-          {baseline && <Link className="btn btn-secondary" href={`/jobs/${baseline.job_id}`}>Open baseline</Link>}
-          {candidate && <Link className="btn btn-secondary" href={`/jobs/${candidate.job_id}`}>Open candidate</Link>}
+          {baseline && <Link className="btn btn-secondary" href={`/jobs/${baseline.job_id}`}>Open Baseline</Link>}
+          {candidate && <Link className="btn btn-secondary" href={`/jobs/${candidate.job_id}`}>Open Candidate</Link>}
         </div>
         {jobsResource.error && <p className="error" role="alert">Jobs: {jobsResource.error}</p>}
         {!jobsResource.loading && !allJobs.length && !jobsResource.error && <p className="meta">No completed jobs yet. Run at least two jobs on the same dataset to compare them.</p>}
@@ -194,14 +191,14 @@ function Compare() {
         {comparison.loading && !outcome && <p className="meta">Comparing...</p>}
         {comparison.error && <p className="error" role="alert">Comparison: {comparison.error}</p>}
         {outcome && !outcome.comparable && <div role="alert">
-          <h2>Not comparable</h2>
+          <h2>Not Comparable</h2>
           <p>These runs differ in ways that would make a side-by-side misleading. Re-run one of them with matching inputs:</p>
           <ul>{outcome.issues.map(issue => <li key={issue}>{describeIssue(issue)} <code className="meta">{issue}</code></li>)}</ul>
         </div>}
         {result && <>
           <div className="panel-head">
             <h2>Results</h2>
-            <span className="pill status-completed">comparable</span>
+            <StatusPill status="completed" label="comparable" />
           </div>
           <div className="table-wrap">
             <table>
@@ -219,7 +216,7 @@ function Compare() {
           {(baseline!.provider === "mock" || candidate!.provider === "mock") && <p className="meta">Mock latency is simulated, not real model performance.</p>}
 
           {!!categories.length && <>
-            <h3 className="section-title">Pass rate by category</h3>
+            <h3 className="section-title">Pass Rate by Category</h3>
             <div className="table-wrap">
               <table>
                 <thead><tr><th>Category</th><th>Baseline</th><th>Candidate</th><th>Change</th></tr></thead>

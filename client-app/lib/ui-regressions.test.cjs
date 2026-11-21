@@ -16,6 +16,7 @@ function loadSource(relative, mocks = {}) {
   module.require = name => {
     if (Object.hasOwn(mocks, name)) return mocks[name];
     if (name.startsWith('@/lib/')) return loadSource(`./${name.slice(6)}.ts`, mocks);
+    if (name.startsWith('@/app/')) return loadSource(`../app/${name.slice(6)}.tsx`, mocks);
     return originalRequire(name);
   };
   module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
@@ -118,7 +119,7 @@ test('job list shows run outcomes, queue count and only recorded owner metadata'
   assert.match(html, /Not run/);
   assert.match(html, /nbl · Evals/);
   assert.match(html, /Job draft-00/);
-  assert.match(html, /Run queued jobs \(0\)<\/button>/);
+  assert.match(html, /Run Queued Jobs \(0\)<\/button>/);
   assert.match(html, /aria-pressed="true" type="button">All<span class="chip-count">2<\/span>/);
 });
 
@@ -335,7 +336,7 @@ test('queue button reports how many queued jobs were started in the background',
   });
   const render = () => harness.render(Page);
   const tree = render(); harness.flush();
-  elements(tree).find(element => element.type === 'button' && textOf(element).startsWith('Run queued')).props.onClick();
+  elements(tree).find(element => element.type === 'button' && textOf(element).startsWith("Run Queued")).props.onClick();
   scheduled.resolve({ requested_max_jobs: 10, scheduled_count: 2, job_ids: ['a', 'b'] });
   await scheduled.promise;
   assert.match(textOf(render()), /Started 2 queued jobs; they run one at a time/);

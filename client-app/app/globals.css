@@ -9,6 +9,28 @@
   --success: #047857;
   --border: #c6d0cd;
   --control-border: #768884;
+  --surface: #fff;
+  --line: #e3ecea;
+  --brand-tint: #ebf7f6;
+  --brand-ink: #0f6059;
+  --brand-deep: #0e7f78;
+  --code-bg: #f0f5f4;
+  --code-line: #d6e3e1;
+  --warning: #b45309;
+  --neutral: #8a9a96;
+  --running-tint: #e0eefc;
+  --running-ink: #145ba7;
+  --completed-tint: #e5f7ee;
+  --failed-tint: #fde8e8;
+  --canceled-tint: #f5efe3;
+  --canceled-ink: #8a5a08;
+  --error-tint: #fff7f7;
+  --error-line: #f0c3c3;
+  --success-tint: #f4fff8;
+  --success-line: #b5e6ce;
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 10px;
 }
 
 * {
@@ -89,7 +111,7 @@ a:hover {
 }
 
 .topbar-nav a:hover {
-  background: #ebf7f6;
+  background: var(--brand-tint);
   color: var(--ink);
   text-decoration: none;
 }
@@ -125,7 +147,7 @@ a:hover {
   min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   padding: 1rem;
   box-shadow: 0 12px 30px rgba(18, 35, 34, 0.08);
 }
@@ -152,10 +174,6 @@ a:hover {
   min-width: 0;
 }
 
-.grid-2 {
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-}
-
 .btn-row {
   display: flex;
   flex-wrap: wrap;
@@ -172,7 +190,9 @@ button,
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease;
   min-height: 44px;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
 }
 
@@ -191,23 +211,24 @@ button:disabled {
 button:hover,
 .btn:hover {
   transform: translateY(-1px);
+  text-decoration: none;
 }
 
 .btn-primary {
-  background: linear-gradient(95deg, var(--brand), #0e7f78);
-  color: #fff;
+  background: linear-gradient(95deg, var(--brand), var(--brand-deep));
+  color: var(--surface);
   box-shadow: 0 10px 24px rgba(14, 165, 168, 0.25);
 }
 
 .btn-secondary {
-  background: #fff;
+  background: var(--surface);
   color: var(--ink);
   border: 1px solid var(--border);
 }
 
 .btn-danger {
   background: var(--danger);
-  color: #fff;
+  color: var(--surface);
 }
 
 .input,
@@ -215,10 +236,10 @@ select,
 textarea {
   width: 100%;
   border: 1px solid var(--control-border);
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   padding: 0.6rem 0.75rem;
   font: inherit;
-  background: #fff;
+  background: var(--surface);
 }
 
 label {
@@ -244,29 +265,29 @@ label {
   border-radius: 999px;
   padding: 0.2rem 0.65rem;
   font-size: 0.82rem;
-  background: #ebf7f6;
-  color: #0f6059;
+  background: var(--brand-tint);
+  color: var(--brand-ink);
   overflow-wrap: anywhere;
 }
 
 .status-running {
-  background: #e0eefc;
-  color: #145ba7;
+  background: var(--running-tint);
+  color: var(--running-ink);
 }
 
 .status-completed {
-  background: #e5f7ee;
+  background: var(--completed-tint);
   color: var(--success);
 }
 
 .status-failed {
-  background: #fde8e8;
+  background: var(--failed-tint);
   color: var(--danger);
 }
 
 .status-canceled {
-  background: #f5efe3;
-  color: #8a5a08;
+  background: var(--canceled-tint);
+  color: var(--canceled-ink);
 }
 
 .table-wrap {
@@ -281,7 +302,7 @@ table {
 
 th,
 td {
-  border-bottom: 1px solid #e3ecea;
+  border-bottom: 1px solid var(--line);
   text-align: left;
   padding: 0.5rem;
   vertical-align: top;
@@ -299,9 +320,9 @@ pre {
 }
 
 pre {
-  background: #f0f5f4;
-  border: 1px solid #d6e3e1;
-  border-radius: 12px;
+  background: var(--code-bg);
+  border: 1px solid var(--code-line);
+  border-radius: var(--radius-md);
   padding: 0.9rem;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -331,10 +352,10 @@ pre {
 
 .evidence {
   min-width: 0;
-  border: 1px solid #e3ecea;
-  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
   padding: 0 0.75rem;
-  background: #fff;
+  background: var(--surface);
 }
 
 .evidence[open] {
@@ -397,9 +418,9 @@ pre {
 }
 
 .kpi {
-  background: #fff;
-  border: 1px solid #e3ecea;
-  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
   padding: 0.75rem 0.9rem;
 }
 
@@ -444,7 +465,7 @@ pre {
 .bar-track {
   height: 0.6rem;
   border-radius: 999px;
-  background: #e3ecea;
+  background: var(--line);
   overflow: hidden;
 }
 
@@ -459,11 +480,11 @@ pre {
 }
 
 .bar-fill.tone-mid {
-  background: #b45309;
+  background: var(--warning);
 }
 
 .bar-fill.tone-neutral {
-  background: #8a9a96;
+  background: var(--neutral);
 }
 
 .bar-value {
@@ -496,7 +517,7 @@ pre {
   min-height: 36px;
   padding: 0.3rem 0.8rem;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface);
   color: var(--ink);
   font-size: 0.88rem;
 }
@@ -504,7 +525,7 @@ pre {
 .chip[aria-pressed="true"] {
   background: var(--ink);
   border-color: var(--ink);
-  color: #fff;
+  color: var(--surface);
 }
 
 .chip-count {
@@ -567,10 +588,6 @@ pre {
   content: "▾";
 }
 
-.panel.grid > p {
-  margin: 0;
-}
-
 .job-table td .pill,
 .job-table td code {
   white-space: nowrap;
@@ -616,14 +633,51 @@ pre {
   align-items: baseline;
   gap: 0.5rem;
   padding: 0.4rem 0.6rem;
-  border: 1px solid #e3ecea;
-  border-radius: 8px;
-  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
 }
 
 .case-move {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
+}
+
+/* Grid gap owns vertical rhythm; default margins would double it. */
+.grid > h2,
+.grid > p,
+.grid > .notes,
+.panel.grid > h2:first-child {
+  margin: 0;
+}
+
+.progress-label {
+  margin: 0 0 0.35rem;
+}
+
+.notice {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1rem;
+  background: var(--surface);
+}
+
+.notice-error {
+  border-color: var(--error-line);
+  background: var(--error-tint);
+}
+
+.notice-success {
+  border-color: var(--success-line);
+  background: var(--success-tint);
+}
+
+.notice > p {
+  margin: 0.35rem 0 0;
+}
+
+.notice > .btn-row {
+  margin-top: 0.6rem;
 }
 
 .empty {
@@ -650,7 +704,7 @@ pre {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 0.35rem 0.75rem;
     padding: 0.75rem 0.25rem;
-    border-bottom: 1px solid #e3ecea;
+    border-bottom: 1px solid var(--line);
   }
 
   .job-table td {
@@ -676,10 +730,6 @@ pre {
 
   .btn-row > .btn {
     flex: 1 1 auto;
-  }
-
-  .grid-2 {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 

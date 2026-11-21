@@ -4,19 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getQueueStats, listJobs, processQueue } from "@/lib/api";
 import { useRemoteResource } from "@/lib/useRemoteResource";
-import { formatDate, formatPercent, rateTone } from "@/lib/format";
+import { formatDate, formatPercent } from "@/lib/format";
+import { Meter, PageHeader, Pager, StatusPill } from "@/app/ui";
 import type { QueueScheduleResult } from "@/lib/types";
 
 const STATUSES = ["draft", "queued", "running", "completed", "failed", "canceled"] as const;
 const SORTS = { "created_at:desc": "Newest first", "created_at:asc": "Oldest first", "updated_at:desc": "Recently updated" };
-
-function statusClass(status: string): string {
-  if (status === "running") return "pill status-running";
-  if (status === "completed") return "pill status-completed";
-  if (status === "failed") return "pill status-failed";
-  if (status === "canceled") return "pill status-canceled";
-  return "pill";
-}
 
 export default function JobsPage() {
   const [statusFilter, setStatusFilter] = useState("all");
@@ -67,10 +60,6 @@ export default function JobsPage() {
     return () => { mounted.current = false; };
   }, []);
 
-  const canPrevious = jobsOffset > 0;
-  const canNext = jobsOffset + jobs.length < totalJobs;
-  const showingFrom = jobs.length ? jobsOffset + 1 : 0;
-  const showingTo = jobs.length ? jobsOffset + jobs.length : 0;
 
   const queued = queueStats?.by_status.queued ?? 0;
   const filtered = statusFilter !== "all" || !!searchFilter;
@@ -78,23 +67,13 @@ export default function JobsPage() {
 
   return (
     <main className="page">
-      <section className="hero">
-        <div>
-          <h1>Evaluation Jobs</h1>
-          <p>Track runs, open a job to review failed attempts and traces, and export reports.</p>
-        </div>
-        <div className="btn-row">
-          <button className="btn btn-secondary" onClick={() => void load()} type="button">
-            Refresh
-          </button>
-          <button className="btn btn-secondary" onClick={() => void handleProcessQueue()} disabled={processing || (!!queueStats && queued === 0)} type="button">
-            {processing ? "Starting queued jobs..." : `Run queued jobs (${queued})`}
-          </button>
-          <Link className="btn btn-primary" href="/jobs/new">
-            New Job
-          </Link>
-        </div>
-      </section>
+      <PageHeader title="Evaluation Jobs" subtitle="Track runs, open a job to review failed attempts and traces, and export reports.">
+        <button className="btn btn-secondary" onClick={() => void load()} type="button">Refresh</button>
+        <button className="btn btn-secondary" onClick={() => void handleProcessQueue()} disabled={processing || (!!queueStats && queued === 0)} type="button">
+          {processing ? "Starting Queued Jobs..." : `Run Queued Jobs (${queued})`}
+        </button>
+        <Link className="btn btn-primary" href="/jobs/new">New Job</Link>
+      </PageHeader>
 
       <section className="panel">
         {queueOutcome && <p className="meta" role="status">
@@ -125,7 +104,7 @@ export default function JobsPage() {
           <button className="btn btn-secondary" onClick={applySearch} type="button">
             Apply Search
           </button>
-          {selected.length === 2 ? <Link className="btn btn-primary" href={`/compare?baseline=${selected[0]}&candidate=${selected[1]}`}>Compare selected</Link>
+          {selected.length === 2 ? <Link className="btn btn-primary" href={`/compare?baseline=${selected[0]}&candidate=${selected[1]}`}>Compare Selected</Link>
             : <span className="meta">{selected.length ? "Select one more completed job to compare" : "Tick two completed jobs to compare them"}</span>}
           {searchFilter && <button
             className="btn btn-secondary"
@@ -157,7 +136,7 @@ export default function JobsPage() {
         {!loading && !result.error && jobs.length === 0 && <div className="empty">
           {filtered ? <p>No jobs match these filters.</p> : <>
             <p>No evaluation jobs yet.</p>
-            <Link className="btn btn-primary" href="/jobs/new">Create your first job</Link>
+            <Link className="btn btn-primary" href="/jobs/new">Create Your First Job</Link>
           </>}
         </div>}
         {jobs.length > 0 && (
@@ -191,7 +170,7 @@ export default function JobsPage() {
                         <div className="meta"><code>{job.job_id.slice(0, 8)}</code> · {formatDate(job.created_at)}</div>
                       </td>
                       <td>
-                        <span className={statusClass(job.status)}>{job.status}</span>
+                        <StatusPill status={job.status} />
                       </td>
                       <td>
                         <code>{job.model_name}</code>
@@ -204,11 +183,11 @@ export default function JobsPage() {
                       <td>
                         {job.status === "running" && job.progress_total ? <>
                           <span className="meta">{job.progress_done ?? 0}/{job.progress_total} attempts</span>
-                          <div className="bar-track mini-bar" aria-hidden="true"><div className="bar-fill tone-neutral" style={{ width: `${((job.progress_done ?? 0) / job.progress_total) * 100}%` }} /></div>
+                          <Meter small tone="neutral" rate={(job.progress_done ?? 0) / job.progress_total} />
                         </> : rate === null ? <span className="meta">{job.linked_run_id ? "No attempts" : "Not run"}</span> : <>
                           <strong>{formatPercent(rate)}</strong>{" "}
                           <span className="meta">{job.passed_attempts}/{job.attempts} passed</span>
-                          <div className="bar-track mini-bar" aria-hidden="true"><div className={rateTone(rate)} style={{ width: `${rate * 100}%` }} /></div>
+                          <Meter small rate={rate} />
                         </>}
                       </td>
                       <td className="meta col-optional">{owner || "—"}</td>
@@ -219,27 +198,7 @@ export default function JobsPage() {
             </table>
           </div>
         )}
-        {totalJobs > 0 && <div className="pager">
-          <p className="meta">Showing {showingFrom}-{showingTo} of {totalJobs}</p>
-          {totalJobs > jobsPageSize && <div className="btn-row">
-            <button
-              className="btn btn-secondary"
-              disabled={!canPrevious || loading}
-              onClick={() => setJobsOffset((prev) => Math.max(0, prev - jobsPageSize))}
-              type="button"
-            >
-              Previous
-            </button>
-            <button
-              className="btn btn-secondary"
-              disabled={!canNext || loading}
-              onClick={() => setJobsOffset((prev) => prev + jobsPageSize)}
-              type="button"
-            >
-              Next
-            </button>
-          </div>}
-        </div>}
+        <Pager offset={jobsOffset} count={jobs.length} total={totalJobs} pageSize={jobsPageSize} loading={loading} onPage={setJobsOffset} />
       </section>
     </main>
   );

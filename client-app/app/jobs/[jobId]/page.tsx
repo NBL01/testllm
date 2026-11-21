@@ -9,7 +9,8 @@ import {
 } from "@/lib/api";
 import { saveDownload } from "@/lib/apiClient";
 import { useRemoteResource } from "@/lib/useRemoteResource";
-import { formatDate, formatMs, formatPercent, rateTone } from "@/lib/format";
+import { formatDate, formatMs, formatPercent } from "@/lib/format";
+import { Meter, PageHeader, Pager, StatusPill } from "@/app/ui";
 import type { TraceRecord } from "@/lib/types";
 
 function asNumber(value: number | undefined, digits = 3): string {
@@ -21,7 +22,7 @@ const asDate = formatDate;
 function Bars({ rows, neutral = false }: { rows: { label: string; rate: number; detail: string }[]; neutral?: boolean }) {
   return <div className="bars">{rows.map(row => <div className="bar-row" key={row.label}>
     <span>{row.label}</span>
-    <div className="bar-track" aria-hidden="true"><div className={neutral ? "bar-fill tone-neutral" : rateTone(row.rate)} style={{ width: `${Math.max(0, Math.min(1, row.rate)) * 100}%` }} /></div>
+    <Meter rate={row.rate} tone={neutral ? "neutral" : "auto"} />
     <span className="bar-value">{row.detail}</span>
   </div>)}</div>;
 }
@@ -45,7 +46,7 @@ function Evidence({ trace }: { trace: TraceRecord }) {
     <details className="evidence">
       <summary>
         <strong>{trace.test_case_id}</strong><span className="meta">attempt {trace.attempt_index}</span>
-        <span className={`pill status-${trace.is_correct ? "completed" : "failed"}`}>{trace.is_correct ? "passed" : "failed"}</span>
+        <StatusPill status={trace.is_correct ? "completed" : "failed"} label={trace.is_correct ? "passed" : "failed"} />
         <span className="meta">{trace.oracle_type || "Oracle unavailable"} · score {asNumber(trace.score)}</span>
       </summary>
       <p className="meta">Trace: <code>{trace.trace_id}</code> | Run: <code>{trace.run_id}</code><br />
@@ -180,9 +181,7 @@ function JobDetail({ jobId }: { jobId: string }) {
 
   return (
     <main className="page">
-      <section className="hero">
-        <div><h1>{job?.project_name || "Evaluation Job"}</h1><p>Job ID: <code>{jobId}</code></p></div>
-        <div className="btn-row">
+      <PageHeader title={job?.project_name || "Evaluation Job"} subtitle={<>Job ID: <code>{jobId}</code></>}>
           <button className="btn btn-secondary" onClick={refreshAll} type="button">Refresh</button>
           <button className="btn btn-secondary" disabled={busy || job?.status === "running"} onClick={() => void performAction("Duplicating", () => duplicateJob(jobId), true)} type="button">Duplicate Job</button>
           {canRetry && <button className="btn btn-secondary" disabled={busy} onClick={() => void performAction("Retrying", () => retryJob(jobId, true), true)} type="button">Retry + Queue New Job</button>}
@@ -190,32 +189,29 @@ function JobDetail({ jobId }: { jobId: string }) {
           {canQueue && <button className="btn btn-secondary" disabled={busy} onClick={() => void performAction("Queueing", () => queueJob(jobId))} type="button">Queue Job</button>}
           {canRun && <button className="btn btn-secondary" disabled={busy} onClick={handleCancel} type="button">Cancel Job</button>}
           {canStop && <button className="btn btn-danger" disabled={busy} onClick={handleCancel} type="button">Stop Run</button>}
-          {job?.status === "completed" && job.source_job_id && <Link className="btn btn-secondary" href={`/compare?baseline=${job.source_job_id}&candidate=${jobId}`}>Compare with source</Link>}
+          {job?.status === "completed" && job.source_job_id && <Link className="btn btn-secondary" href={`/compare?baseline=${job.source_job_id}&candidate=${jobId}`}>Compare with Source</Link>}
           {job?.status === "completed" && <Link className="btn btn-secondary" href={`/compare?baseline=${jobId}`}>Compare</Link>}
           <Link className="btn btn-secondary" href="/jobs">Back to Jobs</Link>
-        </div>
-      </section>
+      </PageHeader>
       {action && <p className="meta" role="status">{action}... Conflicting actions are locked; persisted status continues refreshing.</p>}
       {jobResource.loading && <p className="meta" role="status">{job ? "Refreshing job status..." : "Loading job detail..."}</p>}
       <PanelError label="Job" error={jobResource.error} />
       {actionError && <p className="error" role="alert">{actionError}</p>}
       {job && <div className="grid">
         <section className="panel grid">
-          <h2 style={{ margin: 0 }}>Job Overview</h2>
+          <h2>Job Overview</h2>
           <div className="btn-row">
-            <span className={`pill status-${job.status}`}>{job.status}</span>
+            <StatusPill status={job.status} />
             {job.linked_run_id && <span className="pill">run: {job.linked_run_id}</span>}
             {(poll || action) && <span className="pill">auto-refresh 3s</span>}
           </div>
           {job.status === "running" && !!job.progress_total && <div>
-            <p className="meta" style={{ margin: "0 0 0.35rem" }}>
+            <p className="meta progress-label">
               {job.stop_requested ? "Stopping after the current attempt. " : ""}
               {job.progress_done ?? 0} of {job.progress_total} attempts ({formatPercent((job.progress_done ?? 0) / job.progress_total)})
             </p>
-            <div className="bar-track" role="progressbar" aria-label="Run progress" aria-valuemin={0}
-              aria-valuemax={job.progress_total} aria-valuenow={job.progress_done ?? 0}>
-              <div className="bar-fill" style={{ width: `${((job.progress_done ?? 0) / job.progress_total) * 100}%` }} />
-            </div>
+            <Meter tone="brand" rate={(job.progress_done ?? 0) / job.progress_total}
+              progress={{ label: "Run progress", now: job.progress_done ?? 0, max: job.progress_total }} />
           </div>}
           <div className="form-grid">
             <div><strong>Provider / model</strong><div className="meta">{job.provider} / <code>{job.model_name}</code></div></div>
@@ -245,7 +241,7 @@ function JobDetail({ jobId }: { jobId: string }) {
                 Create Comparable Draft
               </button>
             </div>
-            <p className="meta">Copies the frozen dataset snapshot and every setting; only the model changes, so the two runs stay comparable. Run it, then use Compare with source.</p>
+            <p className="meta">Copies the frozen dataset snapshot and every setting; only the model changes, so the two runs stay comparable. Run it, then use Compare with Source.</p>
           </details>
         </section>
 
@@ -267,13 +263,13 @@ function JobDetail({ jobId }: { jobId: string }) {
                 sub={`p95 ${formatMs(summary.report.p95_latency_ms)} · ${job.provider === "mock" ? "simulated (mock)" : `mean ${formatMs(summary.report.average_latency_ms)}`}`} />
             </div>
             {!!summary.report.category_reports?.length && <>
-              <h3 className="section-title">Pass rate by category</h3>
+              <h3 className="section-title">Pass Rate by Category</h3>
               <Bars rows={[...summary.report.category_reports].sort((a, b) => a.accuracy - b.accuracy).map(item => ({
                 label: item.category, rate: item.accuracy, detail: `${formatPercent(item.accuracy)} · ${item.passed}/${item.total_test_cases}`
               }))} />
             </>}
             {!!Object.keys(summary.report.error_distribution ?? {}).length && <>
-              <h3 className="section-title">Failure types</h3>
+              <h3 className="section-title">Failure Types</h3>
               <Bars neutral rows={Object.entries(summary.report.error_distribution ?? {}).sort((a, b) => b[1] - a[1]).map(([type, count]) => ({
                 label: type, rate: summary.report.failed ? count / summary.report.failed : 0, detail: `${count} attempt${count === 1 ? "" : "s"}`
               }))} />
@@ -312,7 +308,7 @@ function JobDetail({ jobId }: { jobId: string }) {
           {!failedCases.length ? !failedResource.error && <p className="meta">{failedResource.loading ? "Loading failed attempts..." : job.status === "completed" && failedResource.data ? "No failed attempts on this page." : emptyEvidence}</p> :
             <div className="evidence-list">{failedCases.map(item => <details className="evidence" key={`${item.test_case_id}:${item.attempt_index}`}>
               <summary><strong>{item.test_case_id}</strong><span className="meta">attempt {item.attempt_index} · {item.category ?? "uncategorized"}</span>
-                <span className="pill status-failed">{item.error_type ?? "Incorrect answer"}</span><span className="meta">score {asNumber(item.score)}</span></summary>
+                <StatusPill status="failed" label={item.error_type ?? "Incorrect answer"} /><span className="meta">score {asNumber(item.score)}</span></summary>
               <p className="meta">Category: {item.category ?? "n/a"} | Source: {item.test_source ?? "n/a"} | Oracle: {item.oracle_type ?? "n/a"} | Latency: {asNumber(item.latency_ms, 2)} ms</p>
               <div className="form-grid">
                 <div><strong>Expected answer</strong><pre>{item.expected_answer ?? "Not recorded"}</pre></div>
@@ -323,13 +319,7 @@ function JobDetail({ jobId }: { jobId: string }) {
                 setTraceCaseInput(item.test_case_id); setTraceCaseFilter(item.test_case_id); setTracesOffset(0); setOnlyFailedTraces(false);
               }}>View Case Traces (attempt {item.attempt_index})</a>
             </details>)}</div>}
-          {failedTotal > 0 && <div className="pager">
-            <p className="meta">Showing {failedCases.length ? failedOffset + 1 : 0}-{failedCases.length ? failedOffset + failedCases.length : 0} of {failedTotal}</p>
-            {failedTotal > pageSize && <div className="btn-row">
-              <button className="btn btn-secondary" disabled={failedResource.loading || failedOffset === 0} onClick={() => setFailedOffset(value => Math.max(0, value - pageSize))} type="button">Previous</button>
-              <button className="btn btn-secondary" disabled={failedResource.loading || failedOffset + pageSize >= failedTotal} onClick={() => setFailedOffset(value => value + pageSize)} type="button">Next</button>
-            </div>}
-          </div>}
+          <Pager offset={failedOffset} count={failedCases.length} total={failedTotal} pageSize={pageSize} loading={failedResource.loading} onPage={setFailedOffset} />
         </section>
 
         <section className="panel" id="oracle-traces">
@@ -344,13 +334,7 @@ function JobDetail({ jobId }: { jobId: string }) {
           {traceCaseFilter && <p className="meta">Active case: <code>{traceCaseFilter}</code>. Match the attempt index to the failed attempt above.</p>}
           {!traces.length ? !tracesResource.error && <p className="meta">{tracesResource.loading ? "Loading traces..." : tracesResource.data && job.status === "completed" ? "No traces match this filter or page." : emptyEvidence}</p> :
             <div className="evidence-list">{traces.map(trace => <Evidence key={trace.trace_id} trace={trace} />)}</div>}
-          {tracesTotal > 0 && <div className="pager">
-            <p className="meta">Showing {traces.length ? tracesOffset + 1 : 0}-{traces.length ? tracesOffset + traces.length : 0} of {tracesTotal}</p>
-            {tracesTotal > pageSize && <div className="btn-row">
-              <button className="btn btn-secondary" disabled={tracesResource.loading || tracesOffset === 0} onClick={() => setTracesOffset(value => Math.max(0, value - pageSize))} type="button">Previous</button>
-              <button className="btn btn-secondary" disabled={tracesResource.loading || tracesOffset + pageSize >= tracesTotal} onClick={() => setTracesOffset(value => value + pageSize)} type="button">Next</button>
-            </div>}
-          </div>}
+          <Pager offset={tracesOffset} count={traces.length} total={tracesTotal} pageSize={pageSize} loading={tracesResource.loading} onPage={setTracesOffset} />
         </section>
 
         <section className="panel">

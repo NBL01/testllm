@@ -167,7 +167,7 @@ test('compare shows per-case movement for comparable runs and explains refusals'
 
   const adversarial = await run('mock-baseline', 'data/adversarial/mvp_adversarial_v1.jsonl');
   await page.goto(`/compare?baseline=${baseline}&candidate=${adversarial}`);
-  await expect(page.getByRole('heading', { name: 'Not comparable' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Not Comparable' })).toBeVisible();
   await expect(page.getByText('The frozen dataset contents differ.')).toBeVisible();
 });
 
@@ -185,14 +185,14 @@ test('two jobs ticked on the board open a comparison in selection order', async 
   await page.getByLabel(`Select pick-a-${stamp} for comparison`).check();
   await expect(page.getByText('Select one more completed job to compare')).toBeVisible();
   await page.getByLabel(`Select pick-b-${stamp} for comparison`).check();
-  await page.getByRole('link', { name: 'Compare selected' }).click();
+  await page.getByRole('link', { name: 'Compare Selected' }).click();
   await expect(page).toHaveURL(`/compare?baseline=${baseline}&candidate=${candidate}`);
   await expect(page.getByText('comparable', { exact: true })).toBeVisible();
 });
 
 test('both local provider names disclose missing models', async ({ page }) => {
   await page.route(`${api}/models`, route => route.fulfill({ json: {
-    provider: 'ollama', ollama_reachable: false, installed_models: [], recommended_models: [],
+    ollama_reachable: false, installed_models: [],
     available_models: [], error: 'Ollama offline'
   } }));
   await openDraft(page);

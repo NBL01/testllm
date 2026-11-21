@@ -86,7 +86,7 @@ test('comparable draft duplicates job with another model and opens comparison wi
   await page.getByRole('button', { name: 'Run Evaluation', exact: true }).click();
   await expect(page.getByText('completed', { exact: true })).toBeVisible({ timeout: 30_000 });
 
-  await page.getByRole('link', { name: 'Compare with source', exact: true }).click();
+  await page.getByRole('link', { name: 'Compare with Source', exact: true }).click();
   await expect(page).toHaveURL(`/compare?baseline=${sourceJob.job_id}&candidate=${newJobId}`);
   await expect(page.getByText('comparable', { exact: true })).toBeVisible();
 });

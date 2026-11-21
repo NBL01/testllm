@@ -17,7 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <nav aria-label="Primary" className="topbar-nav">
               <Link href="/jobs">Jobs</Link>
               <Link href="/compare">Compare</Link>
-              <Link href="/jobs/new">New job</Link>
+              <Link href="/jobs/new">New Job</Link>
             </nav>
           </div>
         </header>
