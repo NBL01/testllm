@@ -220,6 +220,27 @@ for (const scenario of [
   });
 }
 
+test('keyboard-only journey creates, opens and runs a job', async ({ page }) => {
+  await openDraft(page);
+  const tabTo = async (name: RegExp) => {
+    for (let step = 0; step < 60; step++) {
+      await page.keyboard.press('Tab');
+      const focused = await page.evaluate(() => (document.activeElement?.textContent || '').trim());
+      if (name.test(focused)) return;
+    }
+    throw new Error(`Tab never reached ${name}`);
+  };
+  await tabTo(/^Create Draft Job$/);
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('Draft evaluation job created.', { exact: true })).toBeVisible();
+  await tabTo(/^View Job$/);
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('draft', { exact: true })).toBeVisible();
+  await tabTo(/^Run Evaluation$/);
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('completed', { exact: true })).toBeVisible({ timeout: 30_000 });
+});
+
 test('keyboard navigation reaches labeled form controls without horizontal overflow', async ({ page }) => {
   await openDraft(page);
   await page.getByRole('combobox', { name: 'Provider', exact: true }).focus();

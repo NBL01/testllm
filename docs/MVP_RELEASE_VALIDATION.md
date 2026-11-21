@@ -26,6 +26,33 @@ of the Streamlit console and its routes, and an exact `requirements.lock`.
 The UI coexistence and Streamlit rows in the first run below are historical: that
 console no longer exists.
 
+## Goal-by-goal evidence (G01-G18)
+
+Requirements are those of the MVP implementation review plan. "Met" means automated
+evidence exists for the acceptance criterion on the code above; it is not a release
+approval.
+
+| Goal | Status | Evidence |
+| --- | --- | --- |
+| G01 Architecture | Met | The client calls FastAPI only (`client-app/lib/api.ts`); Python owns execution, scoring, metrics, traces and storage. The second UI was retired. |
+| G02 Domain model | Met | Distinct job, run, attempt and trace IDs; one linked run per executed job; retry/duplicate keep `source_job_id` and the frozen snapshot (`tests/test_job_integrity.py`, browser retry journey). |
+| G03 No auth / metadata | Met | No identity system; optional submitter/team/client/project text persists and shows on the board and job page. |
+| G04 API configuration | Met | `NEXT_PUBLIC_API_BASE_URL` with localhost fallback; CORS origins from `LLM_RELIABILITY_CORS_ORIGINS`; startup commands verified in bash and fish. |
+| G05 Errors | Met | Browser tests cover network/CORS, missing endpoint, 422 validation and 5xx bodies without losing form input. |
+| G06 Health / models | Met | Status panel with backend, Ollama and installed-model count; missing `/models` does not block mock jobs (browser test). |
+| G07 Provider / model | Met | Linked provider/model selection, mock labels, Ollama defaults with not-installed warnings, and free-text OpenAI-compatible models; live runs on local Ollama both ways. |
+| G08 Dataset / oracle | Met | Five backend presets, each executed by the browser suite and validated by `test_every_dataset_preset_creates_a_valid_frozen_job`; custom backend paths; oracle profile labeled as metadata only. |
+| G09 Validation | Met | Required fields, finite numbers, integer counts and bounds enforced client- and server-side; in-flight and duplicate submissions blocked (unit and browser tests). |
+| G10 Submission | Met | "Create Draft Job" with success message, job ID and View Job link; rapid double submission creates one draft (browser test). |
+| G11 Job lifecycle | Met | Atomic claims, cancel, retry, duplicate, queue order, restart recovery, asynchronous execution and stopping a running job with partial evidence (`tests/test_api_evaluation_jobs.py`, live stop after 13 of 60 attempts). |
+| G12 Job list | Met | Search, status chips with counts, sort, totals and pagination; stale responses discarded during polling (unit tests); Enter-to-search (browser test). |
+| G13 Metrics | Met | Attempts vs unique cases, latency provenance, pass^k/pass@k only for uniform k >= 2, schema-only pass rate, p50/p95; legacy composite labeled (`tests/test_analytics_reliability.py`). |
+| G14 Review evidence | Met | Failed attempts show expected/actual and explanation; traces show oracle result, configuration and details; case filter keeps attempt identity (browser test). |
+| G15 Reports | Met | Markdown with job context and caveats, JSON with labeled sample and total, complete quoted and formula-neutralized CSV (`tests/test_reporting_evidence_exports.py`, browser downloads). |
+| G16 Streamlit | Retired | Intentionally removed on 2026-11-21 in favour of one UI. Run comparison moved to the client's `/compare`; candidate review and trace-replay screens were dropped (candidate generation remains a CLI). |
+| G17 Tests / operations | Met | Isolated-DB pytest, client unit/infra and Playwright suites; GitHub Actions runs 44888907289 and 44889598051 passed both jobs on the locked dependencies; backup/restore and fresh-clone rehearsals above. |
+| G18 Later modules | Future | Candidate promotion workflows, recommendations and the master-agent roadmap remain out of MVP scope. |
+
 ## 2026-11-21 verification run
 
 All checks used temporary databases; `data/reliability.duckdb` kept its
@@ -119,12 +146,9 @@ a dependency advisory review or a supported-version matrix.
 
 1. Manual keyboard and screen-reader smoke of the client beyond the automated
    keyboard-order check.
-2. Goal-by-goal G01-G17 evidence and reconciliation; G16 (Streamlit) is now
-   intentionally retired and its comparison duties live in the client.
-3. Observe the GitHub Actions run on the locked dependency set (only local runs so far).
-4. Optional: a remote OpenAI-compatible endpoint (vLLM or a paid API) with its own
+2. Optional: a remote OpenAI-compatible endpoint (vLLM or a paid API) with its own
    key, kept separate from the deterministic mock gate.
-5. Release decision.
+3. Release decision, using the goal matrix above.
 
 Use [the runbook](MVP_RUNBOOK.md) for supported local operation while release
 acceptance remains pending.
