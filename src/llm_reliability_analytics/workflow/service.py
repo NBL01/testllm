@@ -15,7 +15,7 @@ from llm_reliability_analytics.storage.db import get_connection
 from collections.abc import Callable
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from llm_reliability_analytics.analytics.reliability import (
     ReliabilityReport,
@@ -53,18 +53,6 @@ class RunNotFoundError(ValueError):
     """Raised when run_id does not exist in storage."""
 
 
-class LoadCasesResult(BaseModel):
-    input_path: str
-    total_rows: int
-    valid_rows: int
-    invalid_rows: int
-    dataset_versions: list[str] = Field(default_factory=list)
-    test_source_distribution: dict[str, int] = Field(default_factory=dict)
-    category_distribution: dict[str, int] = Field(default_factory=dict)
-    oracle_type_distribution: dict[str, int] = Field(default_factory=dict)
-    stored_test_cases: int
-
-
 class RunBatchWorkflowResult(BaseModel):
     run_id: str
     loaded_test_cases: int
@@ -77,23 +65,6 @@ class RunReportResult(BaseModel):
     run_id: str
     storage_summary: RunAggregatedSummary
     report: ReliabilityReport
-
-
-def load_cases_to_storage(input_path: str) -> LoadCasesResult:
-    initialize_storage_schema()
-    test_cases, summary = load_test_cases(input_path)
-    stored_test_cases = upsert_test_cases(test_cases)
-    return LoadCasesResult(
-        input_path=input_path,
-        total_rows=summary.total_rows,
-        valid_rows=summary.valid_rows,
-        invalid_rows=summary.invalid_rows,
-        dataset_versions=summary.dataset_versions,
-        test_source_distribution=summary.test_source_distribution,
-        category_distribution=summary.category_distribution,
-        oracle_type_distribution=summary.oracle_type_distribution,
-        stored_test_cases=stored_test_cases,
-    )
 
 
 def run_batch_workflow(

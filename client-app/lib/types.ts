@@ -1,4 +1,4 @@
-export type JobStatus = "draft" | "queued" | "running" | "completed" | "failed" | "canceled";
+type JobStatus = "draft" | "queued" | "running" | "completed" | "failed" | "canceled";
 
 export type EvaluationJob = {
   job_id: string;
@@ -91,7 +91,7 @@ export type JobSummaryResult = {
   };
 };
 
-export type FailedCase = {
+type FailedCase = {
   test_case_id: string;
   attempt_index: number;
   category: string | null;
@@ -160,7 +160,7 @@ export type JobClientReportPayload = {
   markdown_report: string;
 };
 
-export type DatasetOption = {
+type DatasetOption = {
   id: string;
   label: string;
   input_path: string;

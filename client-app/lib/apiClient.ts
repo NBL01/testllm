@@ -1,6 +1,6 @@
 export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
-export type ApiErrorKind =
+type ApiErrorKind =
   | "backend_unreachable"
   | "endpoint_not_found"
   | "resource_not_found"

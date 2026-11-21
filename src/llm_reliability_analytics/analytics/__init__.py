@@ -1,7 +1,6 @@
 """Analytics module."""
 
 from llm_reliability_analytics.analytics.coverage_metrics import CoverageMetrics, compute_coverage_metrics
-from llm_reliability_analytics.analytics.insights import generate_run_insights
 from llm_reliability_analytics.analytics.reliability import (
     FrequentErrorTypeSummary,
     ReliabilityReport,
@@ -22,5 +21,4 @@ __all__ = [
     "compute_run_comparison_report",
     "CoverageMetrics",
     "compute_coverage_metrics",
-    "generate_run_insights",
 ]

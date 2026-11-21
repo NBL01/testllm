@@ -46,16 +46,6 @@ def resolve_input_path(file_path: str | Path) -> Path:
     return _resolve_input_path(file_path)
 
 
-def load_test_cases_from_raw(filename: str) -> tuple[list[TestCase], IngestionSummary]:
-    """Load test cases from the default raw dataset directory."""
-    return load_test_cases(RAW_DATA_DIR / filename)
-
-
-def load_test_cases_from_adversarial(filename: str) -> tuple[list[TestCase], IngestionSummary]:
-    """Load adversarial test cases from the dedicated adversarial dataset directory."""
-    return load_test_cases(ADVERSARIAL_DATA_DIR / filename)
-
-
 def _load_from_jsonl(path: Path) -> tuple[list[TestCase], IngestionSummary]:
     test_cases: list[TestCase] = []
     total_rows = 0

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import duckdb
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from llm_reliability_analytics.models.domain import DifficultyLevel, TestCase, TestSource
 
