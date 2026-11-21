@@ -13,14 +13,6 @@ if TYPE_CHECKING:
     from llm_reliability_analytics.workflow.service import RunReportResult
 
 
-def generate_run_markdown_report(run_id: str) -> str:
-    """Load a run from storage and render a Markdown summary report."""
-    from llm_reliability_analytics.workflow.service import run_report_workflow
-
-    run_report = run_report_workflow(run_id)
-    return render_markdown_report(run_report)
-
-
 def render_markdown_report(run_report: RunReportResult) -> str:
     """Render a clean Markdown report suitable for demo/defense presentation."""
     report = run_report.report

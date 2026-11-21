@@ -1,8 +1,9 @@
-from llm_reliability_analytics.reporting.markdown import generate_run_markdown_report
+from llm_reliability_analytics.reporting.markdown import render_markdown_report
+from llm_reliability_analytics.workflow.service import run_report_workflow
 from llm_reliability_analytics.workflow.service import run_batch_workflow
 
 
-def test_generate_run_markdown_report_includes_required_sections(monkeypatch, tmp_path) -> None:
+def test_markdown_report_includes_required_sections(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "reporting_flow.duckdb"
     monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
 
@@ -17,7 +18,7 @@ def test_generate_run_markdown_report_includes_required_sections(monkeypatch, tm
         repeats_per_case=2,
     )
 
-    markdown_report = generate_run_markdown_report(run_result.run_id)
+    markdown_report = render_markdown_report(run_report_workflow(run_result.run_id))
 
     assert "# LLM Reliability Report" in markdown_report
     assert "## Executive Summary" in markdown_report
