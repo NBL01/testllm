@@ -9,7 +9,7 @@ from llm_reliability_analytics.api.routes import router
 from llm_reliability_analytics.api.internal import router as internal_router
 from llm_reliability_analytics.storage.duckdb_store import initialize_storage_schema
 from llm_reliability_analytics.storage.db import get_db_path
-from llm_reliability_analytics.workflow.evaluation_jobs import recover_interrupted_jobs
+from llm_reliability_analytics.workflow.evaluation_jobs import recover_interrupted_jobs, stop_worker
 
 
 @contextmanager
@@ -33,7 +33,11 @@ async def lifespan(_: FastAPI):
     with api_database_owner():
         initialize_storage_schema()
         recover_interrupted_jobs()
-        yield
+        try:
+            yield
+        finally:
+            # Finish (or stop) the in-flight run while this process still owns the database.
+            stop_worker()
 
 
 app = FastAPI(title="LLM Reliability Analytics", version="0.1.0", lifespan=lifespan)

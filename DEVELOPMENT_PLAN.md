@@ -85,8 +85,9 @@ and the automated part of item 6; manual accessibility checks, goal-by-goal evid
 
 - Execution is asynchronous (returns 202 immediately to queue a job for the in-process worker thread);
   the worker serializes runs for DuckDB's single writer, not as a distributed broker. Transport
-  timeouts do not affect runs. On restart, waiting jobs stay queued while an in-flight run
-  is marked failed.
+  timeouts do not affect runs. Graceful shutdown stops the in-flight run after its current
+  attempt (canceled, partial evidence kept) and leaves waiting jobs queued; a hard kill is
+  recovered as failed at startup.
 - The POSIX API lock protects cooperating API processes, not arbitrary direct DB
   scripts. Offline maintenance must be operationally separated.
 - Direct admin batch runs and candidate generation remain only as offline CLI modules

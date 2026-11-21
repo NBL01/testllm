@@ -66,7 +66,7 @@ logger = logging.getLogger(__name__)
 # in the database, so a restart loses only the in-flight run (recovered as failed).
 # Ponytail: in-process, one process only; move to a durable external worker if runs must
 # survive restarts mid-execution or execute in parallel.
-_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation-worker")
+_worker: ThreadPoolExecutor | None = None
 
 # Progress and stop requests for runs executing in this process (the single DB-owning API).
 _progress_lock = threading.Lock()
@@ -89,6 +89,27 @@ def _track_progress(job_id: str) -> Callable[[int, int], bool]:
             _progress[job_id] = (done, total)
             return job_id not in _stop_requests
     return on_attempt
+
+
+def _schedule(job_id: str) -> None:
+    global _worker
+    with _progress_lock:
+        if _worker is None:
+            _worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation-worker")
+        _worker.submit(_run_in_background, job_id)
+
+
+def stop_worker(reason: str = "API shutting down.", wait: bool = True) -> None:
+    """Shutdown hook: drop jobs not started yet (they stay queued in the database) and stop the
+    running one after its current attempt, keeping its partial evidence. Without this, interpreter
+    exit would run every scheduled job to completion before the process could stop."""
+    global _worker
+    with _progress_lock:
+        for job_id in _progress:
+            _stop_requests.setdefault(job_id, reason)
+        worker, _worker = _worker, None
+    if worker is not None:
+        worker.shutdown(wait=wait, cancel_futures=True)
 
 
 def _release_progress(job_id: str) -> tuple[int, int, str | None]:
@@ -420,7 +441,7 @@ def start_job(job_id: str) -> EvaluationJob:
     if job.status in {"draft", "queued"} and not job.linked_run_id and not job.dataset_snapshot:
         raise ValueError("Legacy job has no dataset snapshot. Duplicate it to validate current inputs.")
     queued = queue_job(job_id)
-    _worker.submit(_run_in_background, job_id)
+    _schedule(job_id)
     return queued
 
 
@@ -429,7 +450,7 @@ def schedule_queued_jobs(max_jobs: int = 10) -> EvaluationJobQueueScheduleResult
     effective_max = max(1, int(max_jobs))
     queued_jobs = list_evaluation_jobs(limit=effective_max, status="queued", sort_by="queued_at", sort_order="asc")
     for job in queued_jobs:
-        _worker.submit(_run_in_background, job.job_id)
+        _schedule(job.job_id)
     return EvaluationJobQueueScheduleResult(
         requested_max_jobs=effective_max, scheduled_count=len(queued_jobs), job_ids=[job.job_id for job in queued_jobs])
 

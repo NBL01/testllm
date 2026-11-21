@@ -129,11 +129,12 @@ a completed job may contain incorrect answers or simulated per-attempt generatio
 
 ## Shutdown and interruption recovery
 
-1. Stop queue polling and avoid new UI mutations. Let running requests complete
-   where possible.
-2. Stop FastAPI gracefully in its terminal and wait for it to exit. Stop the Next.js
-   client before maintenance so no one mistakes it for an available service.
-3. If the backend stopped during execution, restart one API with the same DB path.
+1. Stop queue polling and avoid new UI mutations.
+2. Stop FastAPI gracefully (Ctrl+C once) and wait for it to exit. A running evaluation
+   stops after its current attempt and is saved as `canceled` with its partial
+   evidence; jobs waiting in the worker stay `queued` for the next start. Stop the
+   Next.js client before maintenance so no one mistakes it for an available service.
+3. If the backend was killed during execution, restart one API with the same DB path.
    Startup recovery marks persisted running jobs and runs failed, preserving linked
    artifacts and any evidence already written. Waiting jobs remain queued.
 4. Review the failed job and partial evidence, then create a new retry. Do not edit

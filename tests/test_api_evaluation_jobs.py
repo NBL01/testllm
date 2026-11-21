@@ -711,3 +711,44 @@ def test_failed_cases_filter_by_error_type_and_category_matches_report_counts(mo
     for category in (item for item in report["category_reports"] if item["failed"]):
         page = client.get(f"/evaluation-jobs/{job_id}/failed-cases", params={"category": category["category"], "limit": 500}).json()
         assert page["total"] == category["failed"] and {item["category"] for item in page["items"]} == {category["category"]}
+
+
+def test_shutdown_stops_the_running_job_and_leaves_scheduled_jobs_queued(monkeypatch, tmp_path) -> None:
+    import threading
+    from llm_reliability_analytics.runner.mock_client import MockLLMClient
+    from llm_reliability_analytics.workflow import evaluation_jobs as workflow
+
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "shutdown.duckdb"))
+    gate, calls, original = threading.Event(), [], MockLLMClient.generate
+
+    def gated(self, prompt):
+        calls.append(prompt)
+        if len(calls) > 2:
+            assert gate.wait(30)
+        return original(self, prompt)
+
+    monkeypatch.setattr(MockLLMClient, "generate", gated)
+    client = TestClient(app)
+    payload = {"input_path": "sample_test_cases.jsonl", "model_name": "mock-baseline", "limit": 5, "repeat_count": 2}
+    running, waiting = (client.post("/evaluation-jobs", json=payload).json()["job_id"] for _ in range(2))
+    try:
+        client.post(f"/evaluation-jobs/{running}/run")
+        client.post(f"/evaluation-jobs/{waiting}/run")
+        deadline = time.monotonic() + 30
+        while client.get(f"/evaluation-jobs/{running}").json()["progress_done"] != 2:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        stopper = threading.Thread(target=workflow.stop_worker)  # what the API lifespan calls on exit
+        stopper.start()
+        time.sleep(0.1)
+    finally:
+        gate.set()
+    stopper.join(timeout=30)
+    assert not stopper.is_alive()
+    stopped = client.get(f"/evaluation-jobs/{running}").json()
+    assert stopped["status"] == "canceled" and "API shutting down." in stopped["failure_reason"] and stopped["attempts"] == 3
+    left = client.get(f"/evaluation-jobs/{waiting}").json()
+    assert left["status"] == "queued" and left["linked_run_id"] is None
+    # A later start schedules on a fresh worker.
+    assert client.post(f"/evaluation-jobs/{waiting}/run").status_code == 202
+    assert _wait_for_status(client, waiting, {"completed", "failed"})["status"] == "completed"

@@ -117,7 +117,8 @@ a draft becomes queued and one in-process worker thread runs jobs one at a time 
 The client polls queued and running jobs. Appending `?wait=true` keeps the blocking behavior
 (used by tests and the queue CLI). `POST /evaluation-jobs/process-queue` returns 202 and schedules up
 to `max_jobs` oldest queued jobs; `?wait=true` processes them synchronously. HTTP timeouts do not
-affect runs. On restart, waiting jobs stay queued; an in-flight run is recovered as failed.
+affect runs. A graceful API shutdown stops the in-flight run after its current attempt (saved as `canceled`
+with partial evidence) and leaves waiting jobs queued; after a hard kill, startup marks the run failed.
 
 The queue CLI is an HTTP client, passing `wait=true` itself:
 
