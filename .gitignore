@@ -21,6 +21,7 @@ test-results/
 
 # Local agentic-reference material (not part of the project)
 .agents/
+AGENTS.md
 skills-lock.json
 MVP_REVIEW_PLAN.md
 docs/MVP_IMPLEMENTATION_REVIEW.md
