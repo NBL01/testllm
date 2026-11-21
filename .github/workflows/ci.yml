@@ -1,0 +1,75 @@
+name: Test and Release Gates
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      LLM_RELIABILITY_DB_PATH: ${{ runner.temp }}/python-tests/reliability.duckdb
+      MPLBACKEND: Agg
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m venv .venv
+      - run: .venv/bin/python -m pip install -r requirements.txt
+      - run: .venv/bin/python -m pytest -q --junitxml=test-results/python.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-results
+          path: test-results/python.xml
+          retention-days: 7
+
+  client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      LLM_RELIABILITY_DB_PATH: ${{ runner.temp }}/client-fallback/reliability.duckdb
+    defaults:
+      run:
+        working-directory: client-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: client-app/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m venv .venv
+        working-directory: .
+      - run: .venv/bin/python -m pip install -r requirements.txt
+        working-directory: .
+      - run: npm ci
+      - run: npm audit --audit-level=moderate
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      # Playwright builds a clean production snapshot, then starts Next + isolated FastAPI.
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-results
+          path: |
+            client-app/playwright-report/
+            client-app/test-results/
+          retention-days: 7
