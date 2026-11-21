@@ -79,3 +79,90 @@ test('malformed catalog is rejected instead of rendering invented presets', () =
   const { validateJobOptions } = require('./jobForm.ts');
   assert.throws(() => validateJobOptions({ providers: ['mock'] }), /catalog/);
 });
+
+function hookHarness() {
+  const slots = [];
+  let index = 0;
+  let pending = [];
+  return {
+    hooks: {
+      useState(initial) {
+        const slot = index++;
+        if (!(slot in slots)) slots[slot] = typeof initial === 'function' ? initial() : initial;
+        return [slots[slot], value => { slots[slot] = typeof value === 'function' ? value(slots[slot]) : value; }];
+      },
+      useRef(initial) {
+        const slot = index++;
+        if (!(slot in slots)) slots[slot] = { current: initial };
+        return slots[slot];
+      },
+      useEffect(effect, deps) {
+        const slot = index++;
+        const prior = slots[slot];
+        if (!prior || deps.some((value, i) => !Object.is(value, prior.deps[i]))) {
+          pending.push(() => { prior?.cleanup?.(); slots[slot] = { deps, cleanup: effect() }; });
+        }
+      }
+    },
+    render(callback) { index = 0; return callback(); },
+    flush() { const effects = pending; pending = []; effects.forEach(effect => effect()); },
+    cleanup() { slots.forEach(slot => slot?.cleanup?.()); }
+  };
+}
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+function loadRemoteResource(hooks) {
+  const Module = require('node:module');
+  const path = require('node:path');
+  const filename = path.resolve(__dirname, './useRemoteResource.ts');
+  const mod = new Module(filename, module);
+  mod.filename = filename;
+  mod.paths = Module._nodeModulePaths(__dirname);
+  const origReq = mod.require.bind(mod);
+  mod.require = name => name === 'react' ? hooks : origReq(name);
+  mod._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 }
+  }).outputText, filename);
+  return mod.exports;
+}
+
+test('poll re-read of an unchanged key/revision with data does not flip loading to true', async () => {
+  const harness = hookHarness();
+  const { useRemoteResource } = loadRemoteResource(harness.hooks);
+  const first = deferred();
+  const second = deferred();
+  let calls = 0;
+  const render = () => harness.render(() => useRemoteResource('job', () => {
+    calls++;
+    return calls === 1 ? first.promise : second.promise;
+  }, 0, 10));
+
+  render();
+  harness.flush();
+  first.resolve({ status: 'draft' });
+  await first.promise;
+  await new Promise(r => setImmediate(r));
+
+  assert.equal(render().loading, false);
+  assert.deepEqual(render().data, { status: 'draft' });
+
+  // Wait for the poll timer to fire (pollMs = 10)
+  await new Promise(r => setTimeout(r, 20));
+
+  // Poll re-read is in flight with same key and revision; data is preserved and loading stays false
+  assert.equal(calls, 2);
+  const polling = render();
+  assert.equal(polling.loading, false);
+  assert.deepEqual(polling.data, { status: 'draft' });
+
+  second.resolve({ status: 'running' });
+  await second.promise;
+  await new Promise(r => setImmediate(r));
+
+  assert.equal(render().loading, false);
+  assert.deepEqual(render().data, { status: 'running' });
+  harness.cleanup();
+});

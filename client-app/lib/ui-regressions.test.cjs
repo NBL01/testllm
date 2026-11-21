@@ -212,6 +212,44 @@ test('same-query pre-action response is discarded when refresh revision changes'
   harness.cleanup();
 });
 
+test('poll re-read of an unchanged key/revision with data does not flip loading to true', async () => {
+  const harness = hookHarness();
+  const { useRemoteResource } = loadSource('./useRemoteResource.ts', { react: harness.hooks });
+  const first = deferred();
+  const second = deferred();
+  let calls = 0;
+  const render = () => harness.render(() => useRemoteResource('job', () => {
+    calls++;
+    return calls === 1 ? first.promise : second.promise;
+  }, 0, 10));
+
+  render();
+  harness.flush();
+  first.resolve({ status: 'draft' });
+  await first.promise;
+  await new Promise(r => setImmediate(r));
+
+  assert.equal(render().loading, false);
+  assert.deepEqual(render().data, { status: 'draft' });
+
+  // Wait for the poll timer to fire (pollMs = 10)
+  await new Promise(r => setTimeout(r, 20));
+
+  // Poll re-read is in flight with same key and revision; data is preserved and loading stays false
+  assert.equal(calls, 2);
+  const polling = render();
+  assert.equal(polling.loading, false);
+  assert.deepEqual(polling.data, { status: 'draft' });
+
+  second.resolve({ status: 'running' });
+  await second.promise;
+  await new Promise(r => setImmediate(r));
+
+  assert.equal(render().loading, false);
+  assert.deepEqual(render().data, { status: 'running' });
+  harness.cleanup();
+});
+
 function elements(root) {
   if (!root || typeof root !== 'object') return [];
   if (Array.isArray(root)) return root.flatMap(elements);
@@ -307,4 +345,63 @@ test('queue button reports how many queued jobs were started in the background',
   await scheduled.promise;
   assert.match(textOf(render()), /Started 2 queued jobs; they run one at a time/);
   harness.cleanup();
+});
+
+test('compare derives selection from URL and Swap calls router.replace', () => {
+  const harness = hookHarness();
+  let replaced = '';
+  const searchParams = new URLSearchParams('baseline=job-1&candidate=job-2');
+  const { default: ComparePage } = loadSource('../app/compare/page.tsx', {
+    react: { ...harness.hooks, Suspense: ({ children }) => children },
+    'next/link': { default: props => React.createElement('a', props) },
+    'next/navigation': {
+      useRouter: () => ({ replace: url => { replaced = url; } }),
+      useSearchParams: () => searchParams
+    },
+    '@/lib/api': {
+      listJobs: () => Promise.resolve({ total: 1, items: [job] }),
+      getJob: () => Promise.resolve(null),
+      compareRuns: () => Promise.resolve({})
+    },
+    '@/lib/useRemoteResource': {
+      useRemoteResource: key => {
+        if (key === 'completed-jobs') return { loading: false, data: { total: 1, items: [job] }, error: '' };
+        return { loading: false, data: null, error: '' };
+      }
+    }
+  });
+
+  const Component = ComparePage().props.children.type;
+  const tree = harness.render(() => Component());
+  const swapBtn = elements(tree).find(el => el.type === 'button' && textOf(el) === 'Swap');
+  swapBtn.props.onClick();
+  assert.equal(replaced, '/compare?baseline=job-2&candidate=job-1');
+  harness.cleanup();
+});
+
+test('compare fetches jobs beyond 200 with getJob and warns on missing/unknown id', () => {
+  const job201 = { ...job, job_id: 'job-201', linked_run_id: 'run-201', model_name: 'mock-beyond' };
+  const { default: ComparePage } = loadSource('../app/compare/page.tsx', {
+    'next/link': { default: props => React.createElement('a', props) },
+    'next/navigation': {
+      useRouter: () => ({ replace() {} }),
+      useSearchParams: () => new URLSearchParams('baseline=job-201&candidate=unknown-job')
+    },
+    '@/lib/api': {
+      listJobs: () => Promise.resolve({ total: 1, items: [job] }),
+      getJob: id => Promise.resolve(id === 'job-201' ? job201 : null),
+      compareRuns: () => Promise.resolve({})
+    },
+    '@/lib/useRemoteResource': {
+      useRemoteResource: key => {
+        if (key === 'completed-jobs') return { loading: false, data: { total: 1, items: [job] }, error: '' };
+        if (key === 'job-201,unknown-job') return { loading: false, data: [job201, null], error: '' };
+        return { loading: false, data: null, error: '' };
+      }
+    }
+  });
+
+  const html = renderToStaticMarkup(React.createElement(ComparePage));
+  assert.match(html, /value="job-201"/);
+  assert.match(html, /Job unknown-job was not found or has no completed run\./);
 });

@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { compareRuns, listJobs } from "@/lib/api";
+import { useRouter, useSearchParams } from "next/navigation";
+import { compareRuns, getJob, listJobs } from "@/lib/api";
 import { ApiClientError } from "@/lib/apiClient";
 import { formatDate, formatMs, formatPercent } from "@/lib/format";
 import { useRemoteResource } from "@/lib/useRemoteResource";
@@ -96,13 +96,54 @@ export default function ComparePage() {
 }
 
 function Compare() {
+  const router = useRouter();
   const params = useSearchParams();
-  const [baselineId, setBaselineId] = useState(params.get("baseline") ?? "");
-  const [candidateId, setCandidateId] = useState(params.get("candidate") ?? "");
+  const baselineId = params.get("baseline") ?? "";
+  const candidateId = params.get("candidate") ?? "";
+
+  const updateSelection = (nextBaseline: string, nextCandidate: string) => {
+    const search = new URLSearchParams();
+    if (nextBaseline) search.set("baseline", nextBaseline);
+    if (nextCandidate) search.set("candidate", nextCandidate);
+    const qs = search.toString();
+    router.replace(`/compare${qs ? `?${qs}` : ""}`);
+  };
+
   const jobsResource = useRemoteResource("completed-jobs", () => listJobs({ status: "completed", limit: 200 }));
-  const jobs = (jobsResource.data?.items ?? []).filter(job => job.linked_run_id);
-  const baseline = jobs.find(job => job.job_id === baselineId);
-  const candidate = jobs.find(job => job.job_id === candidateId);
+  const loadedJobs = (jobsResource.data?.items ?? []).filter(job => job.linked_run_id);
+  const loadedIds = new Set(loadedJobs.map(job => job.job_id));
+
+  const missingIds = jobsResource.data
+    ? [...new Set([baselineId, candidateId].filter(id => Boolean(id) && !loadedIds.has(id)))].sort()
+    : [];
+  const missingKey = missingIds.length ? missingIds.join(",") : null;
+  const extraResource = useRemoteResource(missingKey, () =>
+    Promise.all(missingIds.map(id => Promise.resolve().then(() => getJob(id)).catch(() => null)))
+  );
+
+  const extraJobs = (extraResource.data ?? []).filter(
+    (job): job is EvaluationJob => Boolean(job && job.status === "completed" && job.linked_run_id)
+  );
+
+  const allJobs = [
+    ...loadedJobs,
+    ...extraJobs.filter(extra => !loadedIds.has(extra.job_id))
+  ];
+
+  const getJobError = (id: string) => {
+    if (!id) return null;
+    if (jobsResource.loading || extraResource.loading) return null;
+    if (!allJobs.some(job => job.job_id === id)) {
+      return `Job ${id} was not found or has no completed run.`;
+    }
+    return null;
+  };
+
+  const baselineError = getJobError(baselineId);
+  const candidateError = getJobError(candidateId);
+
+  const baseline = allJobs.find(job => job.job_id === baselineId);
+  const candidate = allJobs.find(job => job.job_id === candidateId);
   const ready = !!baseline && !!candidate && baseline.job_id !== candidate.job_id;
   const comparison = useRemoteResource(ready ? `${baselineId}:${candidateId}` : null, () => loadComparison(baseline!, candidate!));
   const outcome = comparison.data;
@@ -110,13 +151,17 @@ function Compare() {
   const categories = result ? [...new Set([...(result.baseline_report.category_reports ?? []), ...(result.candidate_report.category_reports ?? [])].map(item => item.category))].sort() : [];
   const categoryRate = (report: MetricsReport, category: string) => report.category_reports?.find(item => item.category === category)?.accuracy;
 
-  const picker = (label: string, value: string, onChange: (id: string) => void) => (
+  const picker = (label: string, value: string, onChange: (id: string) => void, errorMsg?: string | null) => (
     <label>
       {label}
-      <select value={value} onChange={event => onChange(event.target.value)}>
+      <select
+        value={allJobs.some(job => job.job_id === value) ? value : ""}
+        onChange={event => onChange(event.target.value)}
+      >
         <option value="">Select a completed job</option>
-        {jobs.map(job => <option key={job.job_id} value={job.job_id}>{jobLabel(job)}</option>)}
+        {allJobs.map(job => <option key={job.job_id} value={job.job_id}>{jobLabel(job)}</option>)}
       </select>
+      {errorMsg && <p className="error" role="alert">{errorMsg}</p>}
     </label>
   );
 
@@ -131,17 +176,17 @@ function Compare() {
 
       <section className="panel grid">
         <div className="form-grid">
-          {picker("Baseline", baselineId, setBaselineId)}
-          {picker("Candidate", candidateId, setCandidateId)}
+          {picker("Baseline", baselineId, id => updateSelection(id, candidateId), baselineError)}
+          {picker("Candidate", candidateId, id => updateSelection(baselineId, id), candidateError)}
         </div>
         <div className="btn-row">
           <button className="btn btn-secondary" type="button" disabled={!baselineId && !candidateId}
-            onClick={() => { setBaselineId(candidateId); setCandidateId(baselineId); }}>Swap</button>
+            onClick={() => updateSelection(candidateId, baselineId)}>Swap</button>
           {baseline && <Link className="btn btn-secondary" href={`/jobs/${baseline.job_id}`}>Open baseline</Link>}
           {candidate && <Link className="btn btn-secondary" href={`/jobs/${candidate.job_id}`}>Open candidate</Link>}
         </div>
         {jobsResource.error && <p className="error" role="alert">Jobs: {jobsResource.error}</p>}
-        {!jobsResource.loading && !jobs.length && !jobsResource.error && <p className="meta">No completed jobs yet. Run at least two jobs on the same dataset to compare them.</p>}
+        {!jobsResource.loading && !allJobs.length && !jobsResource.error && <p className="meta">No completed jobs yet. Run at least two jobs on the same dataset to compare them.</p>}
         {baselineId && baselineId === candidateId && <p className="meta">Choose two different jobs.</p>}
       </section>
 

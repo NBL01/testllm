@@ -18,8 +18,13 @@ export function useRemoteResource<T>(key: string | null, load: () => Promise<T>,
     const isCurrent = () => active && latest.current.revision === revision;
     async function read() {
       if (!isCurrent()) return;
-      setSnapshot(previous => ({ key, revision, data: previous.key === key ? previous.data : null,
-        error: previous.key === key ? previous.error : "", loading: true }));
+      setSnapshot(previous => ({
+        key,
+        revision,
+        data: previous.key === key ? previous.data : null,
+        error: previous.key === key ? previous.error : "",
+        loading: !(previous.key === key && previous.revision === revision && previous.data !== null)
+      }));
       try {
         const data = await latest.current.load();
         if (isCurrent()) setSnapshot({ key, revision, data, error: "", loading: false });
