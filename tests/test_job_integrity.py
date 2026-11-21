@@ -180,8 +180,10 @@ def test_concurrent_run_claim_executes_only_once(monkeypatch):
         try:
             with pytest.raises(ValueError):
                 jobs.run_job(job.job_id)
-            with pytest.raises(ValueError):
-                jobs.cancel_job(job.job_id)
+            # Cancel during an in-process run requests a stop instead of failing; it takes effect
+            # after the current attempt, and this job has only one, so it still completes.
+            assert jobs.cancel_job(job.job_id).status == "running"
+            assert jobs.job_progress(job.job_id)[2] is True
         finally:
             release.set()
         assert active.result().job.status == "completed"

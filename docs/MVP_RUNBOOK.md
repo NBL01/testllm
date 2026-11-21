@@ -120,9 +120,12 @@ do not document their flags. Standalone batch and generation scripts and noteboo
 offline maintenance tools only: stop the backend and queue polling before using them against its DB
 or managed files.
 
-Only draft or queued jobs can be canceled; running work is not interruptible through
-the cancel action. Completion describes finished execution, so a completed job may
-contain incorrect answers or simulated per-attempt generation failures.
+Draft and queued jobs can be canceled outright. A running job shows live progress
+(attempts done of total) and a **Stop Run** action: the run stops after its current
+attempt, keeps and scores the attempts already made, and ends `canceled` with the reason.
+Partial runs are not comparable and report pass^k/pass@k as N/A. A job marked running by
+another process cannot be stopped here (409). Completion describes finished execution, so
+a completed job may contain incorrect answers or simulated per-attempt generation failures.
 
 ## Shutdown and interruption recovery
 

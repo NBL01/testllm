@@ -12,6 +12,7 @@ import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from llm_reliability_analytics.storage.db import get_connection
+from collections.abc import Callable
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -117,6 +118,7 @@ def run_batch_workflow(
     repeats_per_case: int = 1,
     prepared_cases: list[TestCase] | None = None,
     execution_run=None,
+    on_attempt: Callable[[int, int], bool] | None = None,
 ) -> RunBatchWorkflowResult:
     if repeats_per_case < 1:
         raise ValueError("repeats_per_case must be >= 1")
@@ -151,6 +153,7 @@ def run_batch_workflow(
         seed=seed,
         repeats_per_case=repeats_per_case,
         execution_run=execution_run,
+        on_attempt=on_attempt,
     )
 
 
@@ -248,6 +251,7 @@ def _run_prepared_test_cases(
     seed: int,
     repeats_per_case: int,
     execution_run=None,
+    on_attempt: Callable[[int, int], bool] | None = None,
 ) -> RunBatchWorkflowResult:
     effective_mock_mode = mode if mode is not None else mock_mode
     execution_mode = resolve_execution_mode(provider=provider, mode=run_mode)
@@ -306,7 +310,7 @@ def _run_prepared_test_cases(
         )
 
         runner = TestRunner(llm_client=llm_client)
-        results = runner.run(test_cases, run_id=run.id, repeats_per_case=repeats_per_case)
+        results = runner.run(test_cases, run_id=run.id, repeats_per_case=repeats_per_case, on_attempt=on_attempt)
         latency_source = "mock_simulated" if normalized_run_mode == "mock" else "observed"
         for result in results:
             if normalized_run_mode == "mock":

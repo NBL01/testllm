@@ -39,6 +39,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     duplicate_job,
     get_job_failed_cases,
     get_job_failed_cases_csv,
+    job_progress,
     schedule_queued_jobs,
     start_job,
     get_job_report_payload,
@@ -63,16 +64,31 @@ from llm_reliability_analytics.workflow.service import RunNotFoundError
 router = APIRouter()
 
 
-class EvaluationJobListItem(EvaluationJob):
+class EvaluationJobView(EvaluationJob):
+    """A job plus outcome counts of its run and live progress while this process executes it."""
     attempts: int | None = None
     passed_attempts: int | None = None
+    progress_done: int | None = None
+    progress_total: int | None = None
+    stop_requested: bool = False
+
+
+def _job_views(jobs: list[EvaluationJob]) -> list[EvaluationJobView]:
+    counts = fetch_attempt_counts([job.linked_run_id for job in jobs if job.linked_run_id])
+    views = []
+    for job in jobs:
+        attempts, passed_attempts = counts.get(job.linked_run_id or "", (None, None))
+        done, total, stop = job_progress(job.job_id) or (None, None, False)
+        views.append(EvaluationJobView(**job.model_dump(), attempts=attempts, passed_attempts=passed_attempts,
+                                       progress_done=done, progress_total=total, stop_requested=stop))
+    return views
 
 
 class EvaluationJobListResponse(BaseModel):
     total: int
     limit: int
     offset: int
-    items: list[EvaluationJobListItem]
+    items: list[EvaluationJobView]
 
 
 class EvaluationJobFailedCasesResponse(BaseModel):
@@ -169,23 +185,11 @@ def list_evaluation_jobs_endpoint(
         sort_order=sort_order,
         search_query=q,
     )
-    counts = fetch_attempt_counts([job.linked_run_id for job in result.items if job.linked_run_id])
-    items = []
-    for job in result.items:
-        outcome = counts.get(job.linked_run_id) if job.linked_run_id else None
-        attempts, passed_attempts = outcome if outcome is not None else (None, None)
-        items.append(
-            EvaluationJobListItem(
-                **job.model_dump(),
-                attempts=attempts,
-                passed_attempts=passed_attempts,
-            )
-        )
     return EvaluationJobListResponse(
         total=result.total,
         limit=result.limit,
         offset=result.offset,
-        items=items,
+        items=_job_views(result.items),
     )
 
 
@@ -194,10 +198,10 @@ def evaluation_job_options_endpoint() -> EvaluationJobOptionsResponse:
     return get_evaluation_job_options()
 
 
-@router.get("/evaluation-jobs/{job_id}", response_model=EvaluationJob)
-def get_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
+@router.get("/evaluation-jobs/{job_id}", response_model=EvaluationJobView)
+def get_evaluation_job_endpoint(job_id: str) -> EvaluationJobView:
     try:
-        return get_job(job_id)
+        return _job_views([get_job(job_id)])[0]
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from time import perf_counter
 from uuid import uuid4
 
@@ -20,12 +21,15 @@ class TestRunner:
         test_cases: list[TestCase],
         run_id: str | None = None,
         repeats_per_case: int = 1,
+        on_attempt: Callable[[int, int], bool] | None = None,
     ) -> list[TestResult]:
+        """Run every attempt; `on_attempt(done, total)` returning False stops early with partial results."""
         if repeats_per_case < 1:
             raise ValueError("repeats_per_case must be >= 1")
 
         active_run_id = run_id or str(uuid4())
         results: list[TestResult] = []
+        total = len(test_cases) * repeats_per_case
 
         for test_case in test_cases:
             for attempt_index in range(1, repeats_per_case + 1):
@@ -65,5 +69,7 @@ class TestRunner:
                         error_type=error_type,
                     )
                 )
+                if on_attempt is not None and on_attempt(len(results), total) is False:
+                    return results
 
         return results

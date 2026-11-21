@@ -51,7 +51,7 @@ def test_cancel_job_rejects_running_status(monkeypatch, tmp_path) -> None:
     assert updated is not None
     assert updated.status == "running"
 
-    with pytest.raises(ValueError, match="running; stop worker first"):
+    with pytest.raises(ValueError, match="not executing in this API process"):
         workflow.cancel_job(job.job_id, reason="stop it")
 
 

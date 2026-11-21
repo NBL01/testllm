@@ -72,7 +72,11 @@ and `canceled`.
    processes them synchronously. The queue CLI passes `wait=true` itself. A claim
    conflict from another processor is skipped without failure/counting; the initial
    queue snapshot is processed and remaining jobs are picked up on a later poll.
-4. Draft/queued jobs can be canceled. Cancel does not interrupt an active model call.
+4. Draft/queued jobs can be canceled. Canceling a job that this API process is executing
+   requests a stop: the run ends after its current attempt (an in-flight model call is not
+   interrupted), the attempts already run are scored and stored, and the job becomes
+   `canceled` with the reason and attempt count. While it runs, `GET /evaluation-jobs/{id}`
+   and the job list report `progress_done`/`progress_total`.
 5. An execution exception finalizes the run/job as failed while preserving available
    linkage and partial evidence. Failed attempts alone do not imply a failed job.
 6. API startup marks interrupted running jobs/runs failed (`recover_interrupted_jobs`).

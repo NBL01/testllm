@@ -112,6 +112,7 @@ function JobDetail({ jobId }: { jobId: string }) {
   const canRun = !!job && ["draft", "queued"].includes(job.status) && !job.linked_run_id;
   const canQueue = job?.status === "draft" && !job.linked_run_id;
   const canRetry = !!job && ["failed", "canceled", "completed"].includes(job.status);
+  const canStop = job?.status === "running" && !!job.progress_total && !job.stop_requested;
   const busy = !!action || !job || !!jobResource.error || jobResource.loading;
 
   useEffect(() => {
@@ -144,10 +145,11 @@ function JobDetail({ jobId }: { jobId: string }) {
   }
 
   function handleCancel() {
-    if (actionLock.current || busy || !canRun) return;
-    const reason = window.prompt("Optional cancel reason", "Canceled by user.");
+    if (actionLock.current || busy || !(canRun || canStop)) return;
+    const reason = canStop ? window.prompt("Optional reason for stopping this run", "Stopped by user.")
+      : window.prompt("Optional cancel reason", "Canceled by user.");
     if (reason === null) return;
-    void performAction("Canceling", () => cancelJob(jobId, reason));
+    void performAction(canStop ? "Stopping" : "Canceling", () => cancelJob(jobId, reason));
   }
 
   async function exportFile(execute: () => Promise<void>) {
@@ -183,6 +185,7 @@ function JobDetail({ jobId }: { jobId: string }) {
           {canRun && <button className="btn btn-primary" disabled={busy} onClick={() => void performAction("Running", () => runJob(jobId))} type="button">{job?.status === "queued" ? "Run This Queued Job" : "Run Evaluation"}</button>}
           {canQueue && <button className="btn btn-secondary" disabled={busy} onClick={() => void performAction("Queueing", () => queueJob(jobId))} type="button">Queue Job</button>}
           {canRun && <button className="btn btn-secondary" disabled={busy} onClick={handleCancel} type="button">Cancel Job</button>}
+          {canStop && <button className="btn btn-danger" disabled={busy} onClick={handleCancel} type="button">Stop Run</button>}
           {job?.status === "completed" && <Link className="btn btn-secondary" href={`/compare?baseline=${jobId}`}>Compare</Link>}
           <Link className="btn btn-secondary" href="/jobs">Back to Jobs</Link>
         </div>
@@ -199,6 +202,16 @@ function JobDetail({ jobId }: { jobId: string }) {
             {job.linked_run_id && <span className="pill">run: {job.linked_run_id}</span>}
             {(poll || action) && <span className="pill">auto-refresh 3s</span>}
           </div>
+          {job.status === "running" && !!job.progress_total && <div>
+            <p className="meta" style={{ margin: "0 0 0.35rem" }}>
+              {job.stop_requested ? "Stopping after the current attempt. " : ""}
+              {job.progress_done ?? 0} of {job.progress_total} attempts ({formatPercent((job.progress_done ?? 0) / job.progress_total)})
+            </p>
+            <div className="bar-track" role="progressbar" aria-label="Run progress" aria-valuemin={0}
+              aria-valuemax={job.progress_total} aria-valuenow={job.progress_done ?? 0}>
+              <div className="bar-fill" style={{ width: `${((job.progress_done ?? 0) / job.progress_total) * 100}%` }} />
+            </div>
+          </div>}
           <div className="form-grid">
             <div><strong>Provider / model</strong><div className="meta">{job.provider} / <code>{job.model_name}</code></div></div>
             <div><strong>Dataset / mode</strong><div className="meta"><code>{job.input_path}</code><br />{job.dataset_version || "dataset-defined"} / {job.evaluation_mode}</div></div>

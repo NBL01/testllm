@@ -8,6 +8,8 @@ import hashlib
 import json
 import logging
 import re
+import threading
+from collections.abc import Callable
 from uuid import uuid4
 from typing import Any, Literal, cast
 
@@ -65,6 +67,34 @@ logger = logging.getLogger(__name__)
 # Ponytail: in-process, one process only; move to a durable external worker if runs must
 # survive restarts mid-execution or execute in parallel.
 _worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="evaluation-worker")
+
+# Progress and stop requests for runs executing in this process (the single DB-owning API).
+_progress_lock = threading.Lock()
+_progress: dict[str, tuple[int, int]] = {}
+_stop_requests: dict[str, str] = {}
+
+
+def job_progress(job_id: str) -> tuple[int, int, bool] | None:
+    """(attempts done, total attempts, stop requested) while this process executes the job."""
+    with _progress_lock:
+        if job_id not in _progress:
+            return None
+        done, total = _progress[job_id]
+        return done, total, job_id in _stop_requests
+
+
+def _track_progress(job_id: str) -> Callable[[int, int], bool]:
+    def on_attempt(done: int, total: int) -> bool:
+        with _progress_lock:
+            _progress[job_id] = (done, total)
+            return job_id not in _stop_requests
+    return on_attempt
+
+
+def _release_progress(job_id: str) -> tuple[int, int, str | None]:
+    with _progress_lock:
+        done, total = _progress.pop(job_id, (0, 0))
+        return done, total, _stop_requests.pop(job_id, None)
 
 
 class EvaluationJobQueueStatsResult(BaseModel):
@@ -304,6 +334,8 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
         Literal["regression", "exploratory", "adversarial", "trace_replay"],
         refreshed.evaluation_mode,
     )
+    with _progress_lock:
+        _progress[job_id] = (0, len(refreshed.dataset_snapshot) * refreshed.repeat_count)
     try:
         result = run_batch_workflow(
             input_path=refreshed.input_path,
@@ -323,8 +355,10 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
             limit=refreshed.limit,
             repeats_per_case=refreshed.repeat_count,
             seed=seed,
+            on_attempt=_track_progress(job_id),
         )
     except Exception as exc:  # noqa: BLE001 - persist failure before bubbling error
+        _release_progress(job_id)
         _finish_run(run_id, "failed")
         failed = update_evaluation_job(
             job_id,
@@ -335,6 +369,18 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
         if failed is None:
             raise EvaluationJobNotFoundError(f"Evaluation job not found after failure update: {job_id}") from exc
         raise
+
+    done, total, stop_reason = _release_progress(job_id)
+    if stop_reason is not None and done < total:
+        # Stopped early: the attempts that ran were scored and stored like any other evidence.
+        _finish_run(run_id, "canceled")
+        stopped = update_evaluation_job(
+            job_id, status="canceled", linked_run_id=result.run_id, completed_at=datetime.now(timezone.utc),
+            failure_reason=f"{stop_reason} Stopped after {done} of {total} attempts; partial evidence was kept."[:1000],
+        )
+        if stopped is None:
+            raise EvaluationJobNotFoundError(f"Evaluation job not found after stop update: {job_id}")
+        return EvaluationJobRunResult(job=stopped, result=result)
 
     _finish_run(run_id, "completed")
     completed = update_evaluation_job(
@@ -434,11 +480,18 @@ def queue_stats() -> EvaluationJobQueueStatsResult:
 
 
 def cancel_job(job_id: str, reason: str = "") -> EvaluationJob:
+    """Cancel a draft/queued job, or ask a run executing in this process to stop after its current attempt."""
     job = get_job(job_id)
+    if job.status == "running":
+        with _progress_lock:
+            active = job_id in _progress
+            if active:
+                _stop_requests.setdefault(job_id, reason.strip() or "Stopped by user.")
+        if not active:
+            raise EvaluationJobConflictError(f"Evaluation job is not executing in this API process; it cannot be stopped here: {job_id}")
+        return job
     if job.status in {"completed", "failed"} or job.linked_run_id:
         raise EvaluationJobConflictError(f"Evaluation job cannot be canceled from status={job.status}: {job_id}")
-    if job.status == "running":
-        raise EvaluationJobConflictError(f"Evaluation job running; stop worker first: {job_id}")
     if job.status == "canceled":
         return job
 

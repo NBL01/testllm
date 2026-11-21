@@ -648,3 +648,50 @@ def test_run_and_queue_processing_return_202_and_execute_in_background(monkeypat
         assert _wait_for_status(client, queued_id, {"completed", "failed"})["status"] == "completed"
     runs = {client.get(f"/evaluation-jobs/{queued_id}").json()["linked_run_id"] for queued_id in queued_ids}
     assert len(runs) == 2
+
+
+def test_running_job_reports_progress_and_stops_with_partial_evidence(monkeypatch, tmp_path) -> None:
+    import threading
+    from llm_reliability_analytics.runner.mock_client import MockLLMClient
+
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "stop_jobs.duckdb"))
+    gate, calls, original = threading.Event(), [], MockLLMClient.generate
+
+    def gated(self, prompt):
+        calls.append(prompt)
+        if len(calls) > 2:
+            assert gate.wait(30)  # hold the third attempt until the stop request is in
+        return original(self, prompt)
+
+    monkeypatch.setattr(MockLLMClient, "generate", gated)
+    client = TestClient(app)
+    job_id = client.post("/evaluation-jobs", json={"input_path": "sample_test_cases.jsonl", "model_name": "mock-baseline",
+                                                   "limit": 5, "repeat_count": 2}).json()["job_id"]
+    try:
+        assert client.post(f"/evaluation-jobs/{job_id}/run").status_code == 202
+        deadline = time.monotonic() + 30
+        while (job := client.get(f"/evaluation-jobs/{job_id}").json())["progress_done"] != 2:
+            assert time.monotonic() < deadline, job
+            time.sleep(0.02)
+        assert job["status"] == "running" and job["progress_total"] == 10 and job["stop_requested"] is False
+        stopping = client.post(f"/evaluation-jobs/{job_id}/cancel", json={"reason": "Wrong model."})
+        assert stopping.status_code == 200 and stopping.json()["status"] == "running"
+        assert client.get(f"/evaluation-jobs/{job_id}").json()["stop_requested"] is True
+    finally:
+        gate.set()
+    done = _wait_for_status(client, job_id, {"canceled", "completed", "failed"})
+    assert done["status"] == "canceled"
+    assert "Wrong model." in done["failure_reason"] and "after 3 of 10 attempts" in done["failure_reason"]
+    assert done["attempts"] == 3 and done["progress_done"] is None
+    assert client.get(f"/evaluation-jobs/{job_id}/summary").json()["report"]["total_test_cases"] == 3
+
+
+def test_running_job_outside_this_process_cannot_be_stopped(monkeypatch, tmp_path) -> None:
+    from llm_reliability_analytics.storage.evaluation_job_repository import update_evaluation_job
+
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "foreign_running.duckdb"))
+    client = TestClient(app)
+    job_id = client.post("/evaluation-jobs", json={"input_path": "sample_test_cases.jsonl", "limit": 1}).json()["job_id"]
+    update_evaluation_job(job_id, status="running", linked_run_id="elsewhere")
+    response = client.post(f"/evaluation-jobs/{job_id}/cancel", json={"reason": "x"})
+    assert response.status_code == 409 and "not executing in this API process" in response.json()["detail"]

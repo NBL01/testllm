@@ -32,6 +32,10 @@ export type EvaluationJob = {
   /** List responses only: attempt outcomes of the linked run, null before execution. */
   attempts?: number | null;
   passed_attempts?: number | null;
+  /** Live progress while the API process executes this job. */
+  progress_done?: number | null;
+  progress_total?: number | null;
+  stop_requested?: boolean;
 };
 
 export type EvaluationJobListResponse = {

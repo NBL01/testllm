@@ -63,3 +63,13 @@ def test_test_runner_supports_repeated_attempts() -> None:
     assert all(result.run_id == "run-repeat-001" for result in results)
     assert [result.test_case_id for result in results] == ["tc-repeat-1", "tc-repeat-1", "tc-repeat-1"]
     assert [result.attempt_index for result in results] == [1, 2, 3]
+
+
+def test_on_attempt_returning_false_stops_with_partial_results() -> None:
+    cases = [DomainTestCase(id=f"c{i}", category="math", difficulty="easy", prompt="2 + 2?", expected_answer="4",
+                            oracle_type="exact_match", metadata={}) for i in range(3)]
+    seen = []
+    results = BatchRunner().run(cases, run_id="r", repeats_per_case=2,
+                           on_attempt=lambda done, total: seen.append((done, total)) or done < 3)
+    assert len(results) == 3
+    assert seen == [(1, 6), (2, 6), (3, 6)]

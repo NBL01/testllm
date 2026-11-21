@@ -193,7 +193,10 @@ export default function JobsPage() {
                         <div className="meta">{job.evaluation_mode}</div>
                       </td>
                       <td>
-                        {rate === null ? <span className="meta">{job.linked_run_id ? "No attempts" : "Not run"}</span> : <>
+                        {job.status === "running" && job.progress_total ? <>
+                          <span className="meta">{job.progress_done ?? 0}/{job.progress_total} attempts</span>
+                          <div className="bar-track mini-bar" aria-hidden="true"><div className="bar-fill tone-neutral" style={{ width: `${((job.progress_done ?? 0) / job.progress_total) * 100}%` }} /></div>
+                        </> : rate === null ? <span className="meta">{job.linked_run_id ? "No attempts" : "Not run"}</span> : <>
                           <strong>{formatPercent(rate)}</strong>{" "}
                           <span className="meta">{job.passed_attempts}/{job.attempts} passed</span>
                           <div className="bar-track mini-bar" aria-hidden="true"><div className={rateTone(rate)} style={{ width: `${rate * 100}%` }} /></div>

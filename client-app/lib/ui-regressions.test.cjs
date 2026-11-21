@@ -41,14 +41,15 @@ const report = {
   repeat_k: 2, pass_at_k: 1, pass_hat_k: 0.5, p50_latency_ms: 10, p95_latency_ms: 20
 };
 
-function renderDetail(reportPayload, failures = {}) {
+function renderDetail(reportPayload, failures = {}, jobPatch = {}) {
+  const current = { ...job, ...jobPatch };
   const { default: Page } = loadSource('../app/jobs/[jobId]/page.tsx', {
     '@/lib/api': {}, '@/lib/apiClient': {},
     'next/link': { default: props => React.createElement('a', props) },
     'next/navigation': { useRouter: () => ({ push() {} }), useParams: () => ({ jobId: 'job-1' }) },
     '@/lib/useRemoteResource': { useRemoteResource: key => ({
       loading: false, error: key?.endsWith(':report') ? failures.report || '' : '',
-      data: key === 'job-1' ? job : key?.endsWith(':summary') ? { job, report: reportPayload } : null
+      data: key === 'job-1' ? current : key?.endsWith(':summary') ? { job: current, report: reportPayload } : null
     }) }
   });
   return renderToStaticMarkup(React.createElement(Page, { params: { jobId: 'job-1' } }));
@@ -80,6 +81,16 @@ test('detail renders backend unique_test_cases and latency source count dictiona
   assert.ok(html.indexOf('<span>safety</span>') < html.indexOf('<span>math</span>'));
   assert.match(html, /tone-low" style="width:0%"/);
   assert.match(html, /tone-neutral" style="width:100%"/);
+});
+
+test('running job shows live progress and can be stopped; stop requests are announced', () => {
+  const running = renderDetail(report, {}, { status: 'running', progress_done: 3, progress_total: 10 });
+  assert.match(running, /3 of 10 attempts \(30%\)/);
+  assert.match(running, /role="progressbar"[^>]*aria-valuemax="10" aria-valuenow="3"/);
+  assert.match(running, />Stop Run<\/button>/);
+  const stopping = renderDetail(report, {}, { status: 'running', progress_done: 3, progress_total: 10, stop_requested: true });
+  assert.match(stopping, /Stopping after the current attempt/);
+  assert.doesNotMatch(stopping, />Stop Run</);
 });
 
 test('job list shows run outcomes, queue count and only recorded owner metadata', () => {
