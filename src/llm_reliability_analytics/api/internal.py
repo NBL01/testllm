@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median, multimode
 
 import duckdb
 import pandas as pd
@@ -13,10 +15,17 @@ from pydantic import BaseModel, Field, field_validator
 from typing import Any, Literal
 
 from llm_reliability_analytics.storage.db import get_connection, get_db_path
+from llm_reliability_analytics.storage.duckdb_store import fetch_results_for_run
 from llm_reliability_analytics.datasets.candidate_promoter import (
     CandidatePromotionResult, build_export_jsonl_path, promote_candidates_to_test_cases,
 )
-from llm_reliability_analytics.models.domain import TestSource
+from llm_reliability_analytics.models.domain import ErrorTaxonomy, TestResult, TestSource
+from llm_reliability_analytics.analytics.insights import generate_run_insights
+from llm_reliability_analytics.analytics.reliability import (
+    ReliabilityReport,
+    compute_reliability_report,
+    compute_run_comparison_report,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 router = APIRouter(prefix="/internal", tags=["internal"])
@@ -545,6 +554,214 @@ def datasets() -> dict[str, list[str]]:
     return {"datasets": items}
 
 
+class MetricsRequest(BaseModel):
+    run_ids: list[str] = Field(min_length=1)
+
+    @field_validator("run_ids")
+    @classmethod
+    def valid_run_ids(cls, values: list[str]) -> list[str]:
+        values = [value.strip() for value in values]
+        if any(not value for value in values) or len(set(values)) != len(values):
+            raise ValueError("Run IDs must be nonempty and distinct.")
+        return values
+
+
+class ImprovementRequest(BaseModel):
+    run_id: str = Field(min_length=1)
+    previous_run_id: str = Field(min_length=1)
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _metric_context(run_ids: list[str]) -> tuple[dict[str, dict], dict[str, list[TestResult]]]:
+    if not get_db_path().is_file():
+        raise HTTPException(status_code=503, detail="Backend database is unavailable.")
+    try:
+        conn = get_connection()
+        try:
+            placeholders = ", ".join("?" for _ in run_ids)
+            cursor = conn.execute(f"SELECT * FROM test_runs WHERE id IN ({placeholders})", run_ids)
+            columns = [column[0] for column in cursor.description]
+            runs = {row["id"]: row for row in (dict(zip(columns, values)) for values in cursor.fetchall())}
+        finally:
+            conn.close()
+        missing = [run_id for run_id in run_ids if run_id not in runs]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"Run not found: {', '.join(missing)}")
+        # Ponytail: selected runs are materialized in memory; use paged aggregation for large histories.
+        results = {run_id: fetch_results_for_run(run_id) for run_id in run_ids}
+    except duckdb.Error as exc:
+        raise HTTPException(status_code=503, detail="Backend database could not be read.") from exc
+    return runs, results
+
+
+def _report_for(run_id: str, runs: dict[str, dict], results: dict[str, list[TestResult]]) -> ReliabilityReport:
+    return compute_reliability_report(
+        results[run_id], run_id=run_id, dataset_version=runs[run_id]["dataset_version"],
+        repetition_index=runs[run_id]["repetition_index"],
+    )
+
+
+def _eligibility(runs: dict[str, dict], results: dict[str, list[TestResult]]) -> dict[str, Any]:
+    issues: list[str] = []
+    if any(run["status"] != "completed" for run in runs.values()):
+        issues.append("only completed runs can be compared")
+    metadata = [_json_object(run["metadata"]) for run in runs.values()]
+    configurations = [_json_object(item.get("configuration")) for item in metadata]
+    fields = {key: [run.get(key) for run in runs.values()] for key in (
+        "provider", "dataset_version", "evaluation_mode", "mode", "temperature", "max_output_tokens", "repeat_count",
+    )}
+    fields["dataset_sha256"] = [item.get("dataset_sha256") for item in metadata]
+    fields.update({key: [config.get(key) for config in configurations]
+                   for key in ("oracle_profile", "timeout_seconds", "seed")})
+    for key, values in fields.items():
+        if any(value is None or value == "" for value in values):
+            issues.append(f"unknown {key}")
+        elif any(value != values[0] for value in values[1:]):
+            issues.append(key)
+    versions: dict[str, set[str]] = defaultdict(set)
+    for run in runs.values():
+        versions[run["model_name"]].add(run["model_version"])
+    if any(len(values) > 1 for values in versions.values()):
+        issues.append("model_version")
+
+    evidence = []
+    oracle_configs = []
+    for run_id, rows in results.items():
+        if not rows:
+            issues.append(f"no stored evidence for {run_id}")
+        cases: dict[str, set[int]] = defaultdict(set)
+        configs = {}
+        for row in rows:
+            cases[row.test_case_id].add(row.attempt_index)
+            config = _json_object(row.oracle_details_json).get("input_config")
+            if not isinstance(config, dict):
+                issues.append("unknown input_config")
+            configs[(row.test_case_id, row.attempt_index)] = config
+        expected_attempts = set(range(1, runs[run_id]["repeat_count"] + 1))
+        if any(indices != expected_attempts for indices in cases.values()):
+            issues.append("incomplete attempt coverage/evidence")
+        evidence.append({(row.test_case_id, row.attempt_index, row.prompt, row.expected_answer,
+                         row.oracle_type, row.test_source, row.category) for row in rows})
+        oracle_configs.append(configs)
+    if any(item != evidence[0] for item in evidence[1:]):
+        issues.append("test case coverage/evidence")
+    if any(item != oracle_configs[0] for item in oracle_configs[1:]):
+        issues.append("input_config")
+    issues = list(dict.fromkeys(issues))
+    return {"eligible": not issues, "research_only": bool(issues), "issues": issues}
+
+
+@router.get("/metrics/runs/{run_id}")
+def metrics_run(run_id: str) -> ReliabilityReport:
+    runs, results = _metric_context([run_id])
+    return _report_for(run_id, runs, results)
+
+
+@router.get("/metrics/runs/{run_id}/insights")
+def metrics_insights(run_id: str) -> dict[str, Any]:
+    runs, results = _metric_context([run_id])
+    report = _report_for(run_id, runs, results)
+    insights = generate_run_insights(report, results[run_id])
+    strongest = max(report.category_reports, key=lambda item: (item.accuracy, item.total_test_cases)).category if report.category_reports else "n/a"
+    return {
+        "weakest_category": insights["weakest_category"],
+        "strongest_category": strongest,
+        "most_frequent_error_type": insights["most_common_error_type"],
+        "failure_heavy_source": insights["failure_heavy_source"],
+        "promotion_hint": "Review failed evidence before any dataset promotion.",
+    }
+
+
+@router.post("/metrics/eligibility")
+def metrics_eligibility(request: MetricsRequest) -> dict[str, Any]:
+    runs, results = _metric_context(request.run_ids)
+    return _eligibility(runs, results)
+
+
+@router.post("/metrics/compare")
+def metrics_compare(request: MetricsRequest) -> dict[str, Any]:
+    if len(request.run_ids) != 2:
+        raise HTTPException(status_code=422, detail="Exactly two run_ids are required.")
+    runs, results = _metric_context(request.run_ids)
+    eligibility = _eligibility(runs, results)
+    if not eligibility["eligible"]:
+        raise HTTPException(status_code=409, detail=eligibility)
+    reports = [_report_for(run_id, runs, results) for run_id in request.run_ids]
+    return {
+        "eligibility": eligibility,
+        "baseline_report": reports[0],
+        "candidate_report": reports[1],
+        "comparison_report": compute_run_comparison_report(reports, baseline_run_id=request.run_ids[0]),
+    }
+
+
+@router.post("/metrics/models")
+def metrics_models(request: MetricsRequest) -> dict[str, Any]:
+    runs, results = _metric_context(request.run_ids)
+    eligibility = _eligibility(runs, results)
+    if not eligibility["eligible"]:
+        raise HTTPException(status_code=409, detail=eligibility)
+    models: dict[str, list[str]] = defaultdict(list)
+    for run_id in request.run_ids:
+        models[runs[run_id]["model_name"]].append(run_id)
+    reports = []
+    for model_name, run_ids in models.items():
+        grouped: dict[str, list[TestResult]] = defaultdict(list)
+        for run_id in run_ids:
+            for result in results[run_id]:
+                grouped[result.test_case_id].append(result)
+        median_results = []
+        synthetic_run_id = f"model-median::{model_name}"
+        for rows in grouped.values():
+            correct = median(row.is_correct for row in rows) >= 0.5
+            representative = next(row for row in rows if row.is_correct == correct)
+            errors = [row.error_type for row in rows if not row.is_correct and row.error_type]
+            median_results.append(representative.model_copy(update={
+                "run_id": synthetic_run_id, "attempt_index": 1, "is_correct": correct,
+                "score": median(row.score for row in rows),
+                "latency_ms": median(row.latency_ms for row in rows), "latency_source": "median_aggregated",
+                "error_type": sorted(multimode(errors))[0] if errors and not correct else None,
+                "error_taxonomy": representative.error_taxonomy if not correct else ErrorTaxonomy.NONE,
+                "critical_error_flag": representative.critical_error_flag if not correct else False,
+            }))
+        report = compute_reliability_report(
+            median_results, run_id=synthetic_run_id, dataset_version=runs[run_ids[0]]["dataset_version"],
+        )
+        # Ponytail: legacy median correctness treats ties as passes; replace with a versioned statistic before recommendations.
+        report.measurement_notes.append(
+            "Synthetic per-case medians across selected runs; correctness ties count as passes. "
+            "Representative answers are examples, and repeatability is not measured by this aggregate."
+        )
+        reports.append({"model_name": model_name, "run_ids": run_ids, "report": report})
+    reports.sort(key=lambda item: item["report"].overall_reliability_score, reverse=True)
+    return {"models": reports, "eligibility": eligibility}
+
+
+@router.post("/metrics/improvement")
+def metrics_improvement(request: ImprovementRequest) -> dict[str, Any]:
+    if request.run_id == request.previous_run_id:
+        raise HTTPException(status_code=422, detail="Choose two distinct runs.")
+    runs, results = _metric_context([request.run_id, request.previous_run_id])
+    eligibility = _eligibility(runs, results)
+    if not eligibility["eligible"]:
+        return {"status": "research_only", "eligibility": eligibility, "delta": None}
+    current = _report_for(request.run_id, runs, results)
+    previous = _report_for(request.previous_run_id, runs, results)
+    delta = current.overall_reliability_score - previous.overall_reliability_score
+    return {"status": "improved" if delta > 0 else "worsened" if delta < 0 else "unchanged", "eligibility": eligibility, "delta": delta}
+
+
 class PromoteCandidatesRequest(BaseModel):
     candidate_ids: list[str]
     dataset_version: str = Field(min_length=1)
@@ -623,4 +840,3 @@ def mark_trace_candidate(request: TraceCandidateRequest) -> dict[str, str]:
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
     return {"path": str(path)}
-

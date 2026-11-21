@@ -328,46 +328,49 @@ def main() -> None:
                 if issues:
                     st.warning("Incompatible runs: " + ", ".join(issues))
                 else:
-                    bundle = adapter.compare_runs(
-                        results_df=results_df,
-                        runs_df=runs_df,
-                        baseline_run_id=baseline_run_id,
-                        candidate_run_id=candidate_run_id,
-                    )
+                    try:
+                        bundle = adapter.compare_runs(
+                            results_df=results_df,
+                            runs_df=runs_df,
+                            baseline_run_id=baseline_run_id,
+                            candidate_run_id=candidate_run_id,
+                        )
+                    except IncompatibleRunsError as exc:
+                        st.warning(str(exc))
+                    else:
+                        render_run_comparison_summary(bundle)
 
-                    render_run_comparison_summary(bundle)
+                        metric_rows = [
+                            {
+                                "metric": "accuracy",
+                                "baseline": bundle.baseline_report.accuracy,
+                                "candidate": bundle.candidate_report.accuracy,
+                                "delta": bundle.candidate_report.accuracy - bundle.baseline_report.accuracy,
+                            },
+                            {
+                                "metric": "reliability_score",
+                                "baseline": bundle.baseline_report.overall_reliability_score,
+                                "candidate": bundle.candidate_report.overall_reliability_score,
+                                "delta": (
+                                    bundle.candidate_report.overall_reliability_score
+                                    - bundle.baseline_report.overall_reliability_score
+                                ),
+                            },
+                            {
+                                "metric": "average_latency_ms",
+                                "baseline": bundle.baseline_report.average_latency_ms,
+                                "candidate": bundle.candidate_report.average_latency_ms,
+                                "delta": (
+                                    bundle.candidate_report.average_latency_ms
+                                    - bundle.baseline_report.average_latency_ms
+                                ),
+                            },
+                        ]
+                        metric_df = pd.DataFrame(metric_rows)
+                        st.dataframe(metric_df, use_container_width=True, hide_index=True)
 
-                    metric_rows = [
-                        {
-                            "metric": "accuracy",
-                            "baseline": bundle.baseline_report.accuracy,
-                            "candidate": bundle.candidate_report.accuracy,
-                            "delta": bundle.candidate_report.accuracy - bundle.baseline_report.accuracy,
-                        },
-                        {
-                            "metric": "reliability_score",
-                            "baseline": bundle.baseline_report.overall_reliability_score,
-                            "candidate": bundle.candidate_report.overall_reliability_score,
-                            "delta": (
-                                bundle.candidate_report.overall_reliability_score
-                                - bundle.baseline_report.overall_reliability_score
-                            ),
-                        },
-                        {
-                            "metric": "average_latency_ms",
-                            "baseline": bundle.baseline_report.average_latency_ms,
-                            "candidate": bundle.candidate_report.average_latency_ms,
-                            "delta": (
-                                bundle.candidate_report.average_latency_ms
-                                - bundle.baseline_report.average_latency_ms
-                            ),
-                        },
-                    ]
-                    metric_df = pd.DataFrame(metric_rows)
-                    st.dataframe(metric_df, use_container_width=True, hide_index=True)
-
-                    st.subheader("Category-wise Accuracy Delta")
-                    plot_category_accuracy_delta(bundle.category_delta)
+                        st.subheader("Category-wise Accuracy Delta")
+                        plot_category_accuracy_delta(bundle.category_delta)
 
     # 6) Raw Results: transparent attempt-level drill-down.
     with tabs[5]:

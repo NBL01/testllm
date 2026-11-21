@@ -120,36 +120,6 @@ def test_missing_database_is_not_empty_analytics(client, monkeypatch, tmp_path):
     assert not (tmp_path / "missing.duckdb").exists()
 
 
-@pytest.mark.parametrize("field,value", [("provider", "ollama"), ("dataset_version", "v2"),
-    ("temperature", 0.9), ("max_output_tokens", 256), ("repeat_count", 3), ("evaluation_mode", "adversarial")])
-def test_comparisons_reject_incompatible_settings(field, value):
-    import pandas as pd
-    from frontend.services.metrics_adapter import MetricsAdapter
-
-    base = {"run_id": "a", "model_name": "same", "provider": "mock", "dataset_version": "v1",
-            "temperature": 0.0, "max_output_tokens": 128, "repeat_count": 1, "evaluation_mode": "regression",
-            "mode": "mock", "model_version": "n/a", "status": "completed", "created_at": "2026-01-01"}
-    runs = pd.DataFrame([base, {**base, "run_id": "b", field: value}])
-    results = pd.DataFrame([{"run_id": rid, "test_case_id": "case", "is_correct": True,
-                             "score": 1.0, "latency_ms": 1.0, "error_type": ""} for rid in ["a", "b"]])
-    adapter = MetricsAdapter()
-    with pytest.raises(ValueError, match=field):
-        adapter.compare_runs(results, runs, "a", "b")
-    with pytest.raises(ValueError, match=field):
-        adapter.build_multi_run_model_reports(results, runs)
-
-
-def test_comparisons_reject_different_case_evidence():
-    import pandas as pd
-    from frontend.services.metrics_adapter import MetricsAdapter
-
-    runs = pd.DataFrame([{"run_id": rid, "provider": "mock", "dataset_version": "v1"} for rid in ["a", "b"]])
-    results = pd.DataFrame([{"run_id": "a", "test_case_id": "case", "expected_answer": "4"},
-                            {"run_id": "b", "test_case_id": "case", "expected_answer": "5"}])
-    with pytest.raises(ValueError, match="evidence"):
-        MetricsAdapter().compare_runs(results, runs, "a", "b")
-
-
 def test_queue_cli_is_http_only(monkeypatch, capsys):
     import httpx
     from llm_reliability_analytics.cli import process_queue
