@@ -231,22 +231,6 @@ def test_failed_cases_on_draft_job_returns_400(monkeypatch, tmp_path) -> None:
 # Probe 3: POST /internal/metrics/compare edge cases
 # ---------------------------------------------------------------------------
 
-def test_metrics_compare_rejects_invalid_run_ids_count(monkeypatch, tmp_path) -> None:
-    db_path = tmp_path / "compare_count.duckdb"
-    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
-    client = TestClient(app)
-
-    # 1 run_id -> 422
-    res_one = client.post("/internal/metrics/compare", json={"run_ids": ["run-1"]})
-    assert res_one.status_code == 422
-    assert "Exactly two run_ids are required" in res_one.json()["detail"]
-
-    # 3 run_ids -> 422
-    res_three = client.post("/internal/metrics/compare", json={"run_ids": ["run-1", "run-2", "run-3"]})
-    assert res_three.status_code == 422
-    assert "Exactly two run_ids are required" in res_three.json()["detail"]
-
-
 def test_metrics_compare_with_canceled_or_partial_run_returns_409(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "compare_canceled.duckdb"
     monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
@@ -697,7 +681,7 @@ def test_exact_match_strict_output_rejects_number_inside_text_even_without_subst
     for metadata in ({"strict_output": True, "strict_exact": True}, {"strict_output": True}):
         result = oracle.evaluate(expected_answer="10", actual_answer="The total answer is 10 items.", metadata=metadata)
         assert (result.is_correct, result.error_type) == (False, "format_violation"), metadata
-    # Without strict_output the legacy numeric extraction still passes.
+    # Without strict_output the default numeric extraction still passes.
     assert oracle.evaluate(expected_answer="10", actual_answer="The total answer is 10 items.",
                            metadata={"strict_exact": True}).is_correct is True
 

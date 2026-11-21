@@ -37,6 +37,13 @@ def persist(run_id="a", *, metadata=None, config=None, correct=True, model="mode
     return results
 
 
+def eligibility(client, run_ids=("a", "b")):
+    """Eligibility from the compare body (200) or the 409 rejection detail."""
+    response = client.post("/internal/metrics/compare", json={"run_ids": list(run_ids)})
+    assert response.status_code in (200, 409), response.text
+    return response.json()["eligibility"] if response.status_code == 200 else response.json()["detail"]
+
+
 def test_matched_stored_configuration_allows_comparison(client):
     persist(correct=False)
     persist("b", model="model-b")
@@ -54,9 +61,9 @@ def test_matched_stored_configuration_allows_comparison(client):
 def test_real_providers_compare_across_serving_stacks_but_not_against_mock(client):
     persist(run_settings={"provider": "ollama", "mode": "real_local"})
     persist("b", model="model-b", run_settings={"provider": "openai_compatible", "mode": "real_api"})
-    assert client.post("/internal/metrics/eligibility", json={"run_ids": ["a", "b"]}).json()["eligible"] is True
+    assert eligibility(client)["eligible"] is True
     persist("c", model="model-c")  # mock
-    issues = client.post("/internal/metrics/eligibility", json={"run_ids": ["a", "c"]}).json()["issues"]
+    issues = eligibility(client, ["a", "c"])["issues"]
     assert "provider" in issues and "mode" in issues
 
 
@@ -77,11 +84,10 @@ def test_real_providers_compare_across_serving_stacks_but_not_against_mock(clien
 def test_mismatched_or_unknown_evidence_is_research_only(client, change, expected):
     persist()
     persist("b", **change)
-    eligibility = client.post("/internal/metrics/eligibility", json={"run_ids": ["a", "b"]})
-    assert eligibility.status_code == 200, eligibility.text
-    assert eligibility.json()["research_only"] is True
-    assert expected in " ".join(eligibility.json()["issues"])
-    assert client.post("/internal/metrics/compare", json={"run_ids": ["a", "b"]}).status_code == 409
+    response = client.post("/internal/metrics/compare", json={"run_ids": ["a", "b"]})
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["research_only"] is True
+    assert expected in " ".join(response.json()["detail"]["issues"])
 
 
 def test_missing_oracle_config_on_both_sides_is_not_equality(client):
@@ -93,24 +99,22 @@ def test_missing_oracle_config_on_both_sides_is_not_equality(client):
         conn.execute("UPDATE test_results SET oracle_details_json = '{}' ")
     finally:
         conn.close()
-    response = client.post("/internal/metrics/eligibility", json={"run_ids": ["a", "b"]})
-    assert response.status_code == 200, response.text
-    assert response.json()["research_only"]
-    assert "input_config" in " ".join(response.json()["issues"])
+    result = eligibility(client)
+    assert result["research_only"]
+    assert "input_config" in " ".join(result["issues"])
 
 
 def test_canonical_config_key_order_and_attempt_coverage(client):
     persist(config={"schema": {"type": "object", "required": ["x"]}})
     persist("b", config={"schema": {"required": ["x"], "type": "object"}})
-    assert client.post("/internal/metrics/eligibility", json={"run_ids": ["a", "b"]}).json()["eligible"]
+    assert eligibility(client)["eligible"]
     from llm_reliability_analytics.storage.db import get_connection
     conn = get_connection()
     try:
         conn.execute("UPDATE test_results SET attempt_index = 2 WHERE run_id = 'b'")
     finally:
         conn.close()
-    response = client.post("/internal/metrics/eligibility", json={"run_ids": ["a", "b"]})
-    assert "evidence" in " ".join(response.json()["issues"])
+    assert "evidence" in " ".join(eligibility(client)["issues"])
 
 
 def test_actual_jobs_ignore_identity_and_compare_per_case_oracles(client):
@@ -130,9 +134,9 @@ def test_actual_jobs_ignore_identity_and_compare_per_case_oracles(client):
 
 
 def test_run_without_results_cannot_compare(client):
+    persist()
     create_test_run(name="empty", run_id="empty", model_name="mock-baseline")
-    eligibility = client.post("/internal/metrics/eligibility", json={"run_ids": ["empty"]})
-    assert eligibility.json()["research_only"]
+    assert "no stored evidence for empty" in eligibility(client, ["a", "empty"])["issues"]
 
 
 def test_changed_expected_answer_disqualifies_comparison(client):
@@ -140,10 +144,9 @@ def test_changed_expected_answer_disqualifies_comparison(client):
     rows = persist("b")
     rows[0].expected_answer = "5"
     insert_batch_results(rows)
-    response = client.post("/internal/metrics/eligibility", json={"run_ids": ["a", "b"]})
-    assert "evidence" in " ".join(response.json()["issues"])
+    assert "evidence" in " ".join(eligibility(client)["issues"])
 
 
-@pytest.mark.parametrize("run_ids", [[], [" "], ["a", "a"]])
+@pytest.mark.parametrize("run_ids", [[], ["a"], [" ", "b"], ["a", "a"], ["a", "b", "c"]])
 def test_invalid_metrics_selection_is_rejected_before_storage(client, run_ids):
     assert client.post("/internal/metrics/compare", json={"run_ids": run_ids}).status_code == 422

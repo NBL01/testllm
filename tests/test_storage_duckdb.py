@@ -9,7 +9,7 @@ from llm_reliability_analytics.storage.duckdb_store import (
     fetch_results_for_run,
     initialize_storage_schema,
     insert_batch_results,
-    insert_test_cases,
+    upsert_test_cases,
 )
 
 
@@ -49,7 +49,7 @@ def test_initialize_storage_schema_creates_required_tables(monkeypatch, tmp_path
     ]
 
 
-def test_insert_test_cases_create_run_insert_results_and_fetch_summary(monkeypatch, tmp_path) -> None:
+def test_upsert_test_cases_create_run_insert_results_and_fetch_summary(monkeypatch, tmp_path) -> None:
     db_path = tmp_path / "workflow_test.duckdb"
     monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(db_path))
 
@@ -74,7 +74,7 @@ def test_insert_test_cases_create_run_insert_results_and_fetch_summary(monkeypat
             metadata={"source": "unit-test"},
         ),
     ]
-    inserted_cases = insert_test_cases(test_cases)
+    inserted_cases = upsert_test_cases(test_cases)
     assert inserted_cases == 2
 
     run = create_test_run(name="demo-run", model_name="mock-llm-v1")

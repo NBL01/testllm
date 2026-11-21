@@ -132,7 +132,7 @@ The live OpenAPI schema at `/docs` is the exact route/parameter reference.
 | Queue operations | `/evaluation-jobs/process-queue`, `/evaluation-jobs/queue/stats` |
 | Job evidence | Summary, failed-cases, traces, report, client-report under `/evaluation-jobs/{job_id}` |
 | Complete CSV | `/evaluation-jobs/{job_id}/failed-cases.csv` |
-| Comparison | POST `/internal/metrics/eligibility`, POST `/internal/metrics/compare` |
+| Comparison | POST `/internal/metrics/compare` (409 lists eligibility issues) |
 
 Direct batch runs and candidate generation are not exposed over HTTP; they remain available
 only as offline CLI modules (`llm_reliability_analytics.cli.run_batch`, `llm_reliability_analytics.cli.generate_candidates`).

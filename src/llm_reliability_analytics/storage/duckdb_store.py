@@ -98,7 +98,6 @@ def upsert_test_cases(test_cases: list[TestCase]) -> int:
 
 
 # Backward-compatible alias used by older code/tests.
-insert_test_cases = upsert_test_cases
 
 
 def create_test_run(

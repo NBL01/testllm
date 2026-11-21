@@ -20,18 +20,10 @@ def test_options_expose_three_mock_models() -> None:
     ]
 
 
-def test_options_expose_only_effective_oracle_profile(monkeypatch) -> None:
-    monkeypatch.setenv("LLM_RELIABILITY_ORACLE_PROFILES", "strict,finance-risk")
-
-    payload = TestClient(app).get("/evaluation-jobs/options").json()
-
-    assert payload["oracle_profiles"] == ["default"]
-
-
 SOURCE_MODE = {"synthetic": "exploratory"}
 
 
-def test_catalog_has_truthful_presets_and_retains_legacy_option_fields() -> None:
+def test_catalog_has_truthful_presets() -> None:
     payload = catalog.get_evaluation_job_options().model_dump()
     datasets = {entry["id"]: entry for entry in payload["datasets"]}
 
@@ -54,12 +46,10 @@ def test_catalog_has_truthful_presets_and_retains_legacy_option_fields() -> None
     assert "alias" in regression["label"].lower()
     assert datasets["adversarial_v1"]["input_path"] == "data/adversarial/mvp_adversarial_v1.jsonl"
     assert datasets["adversarial_v1"]["dataset_version"] == "adversarial_v1"
-    assert "dataset_paths" in payload
-    assert "v1" in payload["dataset_versions"]
 
 
 def test_adversarial_fixture_is_valid_and_keeps_per_case_oracles() -> None:
-    path = catalog.PROJECT_ROOT / "data/adversarial/mvp_adversarial_v1.jsonl"
+    path = resolve_input_path("data/adversarial/mvp_adversarial_v1.jsonl")
     assert path.is_file()
     cases, summary = load_test_cases(path)
 
@@ -70,25 +60,6 @@ def test_adversarial_fixture_is_valid_and_keeps_per_case_oracles() -> None:
     assert summary.test_source_distribution == {"adversarial": len(cases)}
     assert {case.oracle_type.value for case in cases} >= {"keyword_match", "regex_match", "json_schema"}
     assert all(case.metadata.get("keywords") for case in cases if case.oracle_type.value == "keyword_match")
-
-
-@pytest.mark.parametrize("invalid_row", [
-    "null", "[]", '[{"dataset_version":"not-a-row"}]', '"text"', "42", "true",
-    '{"dataset_version":', '{"dataset_version": []}', '{"dataset_version": {}}',
-])
-def test_discovery_skips_malformed_rows_and_continues(monkeypatch, tmp_path, invalid_row) -> None:
-    directory = tmp_path / "data/raw"
-    directory.mkdir(parents=True)
-    (directory / "mixed.jsonl").write_text(
-        invalid_row + '\n{"dataset_version":" discovered_v2 "}\n', encoding="utf-8",
-    )
-    monkeypatch.setattr(catalog, "PROJECT_ROOT", tmp_path)
-
-    options = catalog.get_evaluation_job_options()
-
-    assert options.dataset_paths == ["data/raw/mixed.jsonl"]
-    assert "discovered_v2" in options.dataset_versions
-    assert "not-a-row" not in options.dataset_versions
 
 
 def test_named_noisy_mock_changes_outputs_reproducibly() -> None:
@@ -118,23 +89,23 @@ def test_named_failing_mock_always_raises_reproducibly() -> None:
         assert client.failure_rate == 1.0
 
 
-@pytest.mark.parametrize("model_name", [None, "legacy-mock-label", "mock-baseline"])
+@pytest.mark.parametrize("model_name", [None, "unlisted-mock-label", "mock-baseline"])
 @pytest.mark.parametrize("mode,failure_rate", [("deterministic", 0.0), ("semi_random", 0.0), ("semi_random", 1.0)])
-def test_legacy_direct_mock_configuration_is_preserved(model_name, mode, failure_rate) -> None:
+def test_direct_mock_configuration_matches_mock_client(model_name, mode, failure_rate) -> None:
     client = build_llm_client(
         "mock", "mock", model_name, mock_mode=mode, seed=17, failure_rate=failure_rate,
     )
-    legacy = MockLLMClient(mode=mode, seed=17, failure_rate=failure_rate)
+    expected = MockLLMClient(mode=mode, seed=17, failure_rate=failure_rate)
 
-    assert client.mode == legacy.mode
-    assert client.seed == legacy.seed
-    assert client.failure_rate == legacy.failure_rate
+    assert client.mode == expected.mode
+    assert client.seed == expected.seed
+    assert client.failure_rate == expected.failure_rate
     for _ in range(20):
         if failure_rate == 1.0:
             with pytest.raises(RuntimeError, match="mock_generation_error"):
                 client.generate("What is the capital of Japan?")
         else:
-            assert client.generate("What is the capital of Japan?") == legacy.generate("What is the capital of Japan?")
+            assert client.generate("What is the capital of Japan?") == expected.generate("What is the capital of Japan?")
 
 
 @pytest.mark.parametrize("provider,run_mode", [("ollama", "mock"), ("local", "mock"), ("mock", "real_local")])

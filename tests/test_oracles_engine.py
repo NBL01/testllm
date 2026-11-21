@@ -231,7 +231,7 @@ def test_numeric_strict_output_rejects_extra_text_as_format_violation() -> None:
     accidental = oracle.evaluate(expected_answer="11", actual_answer="11, since 24 - 13 = 11", metadata=strict)
     assert accidental.is_correct is False
     assert oracle.evaluate(expected_answer="11", actual_answer=" 11 ", metadata=strict).is_correct is True
-    # Without strict_output the legacy lenient extraction is unchanged.
+    # Without strict_output the default lenient extraction is unchanged.
     assert oracle.evaluate(expected_answer="11", actual_answer="11, since 24 - 13 = 11", metadata={"tolerance": 0.0}).is_correct is True
 
 
@@ -257,7 +257,7 @@ def test_exact_match_strict_output_rejects_answers_embedded_in_sentences() -> No
     assert (sentence.is_correct, sentence.error_type) == (False, "format_violation")
     assert sentence.details["comparison_result"] == "contains_match_rejected_by_strict_output"
     assert oracle.evaluate(expected_answer="Lisbon", actual_answer=" lisbon. ", metadata=strict).is_correct is True
-    # Legacy lenient default and an explicit opt-in to substring matching are unchanged.
+    # The lenient default and an explicit opt-in to substring matching are unchanged.
     assert oracle.evaluate(expected_answer="Lisbon", actual_answer="Portugal's capital is Lisbon.").is_correct is True
     assert oracle.evaluate(expected_answer="Lisbon", actual_answer="Portugal's capital is Lisbon.",
                            metadata={**strict, "allow_substring_match": True}).is_correct is True

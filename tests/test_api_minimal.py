@@ -8,8 +8,6 @@ def test_models_endpoint_returns_expected_shape() -> None:
     response = client.get("/models")
     assert response.status_code == 200
     payload = response.json()
-    assert payload["provider"] == "ollama"
     assert "ollama_reachable" in payload
     assert isinstance(payload["installed_models"], list)
-    assert isinstance(payload["recommended_models"], list)
     assert isinstance(payload["available_models"], list)

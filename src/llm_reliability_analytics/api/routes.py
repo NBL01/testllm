@@ -106,10 +106,8 @@ class EvaluationJobTracesResponse(BaseModel):
 
 
 class ModelsResponse(BaseModel):
-    provider: str = "ollama"
     ollama_reachable: bool
     installed_models: list[str]
-    recommended_models: list[str]
     available_models: list[str]
     error: str | None = None
 
@@ -128,7 +126,6 @@ def models_endpoint() -> ModelsResponse:
         return ModelsResponse(
             ollama_reachable=True,
             installed_models=installed,
-            recommended_models=RECOMMENDED_OLLAMA_MODELS,
             available_models=available,
             error=None,
         )
@@ -136,7 +133,6 @@ def models_endpoint() -> ModelsResponse:
         return ModelsResponse(
             ollama_reachable=False,
             installed_models=[],
-            recommended_models=RECOMMENDED_OLLAMA_MODELS,
             available_models=RECOMMENDED_OLLAMA_MODELS,
             error=str(exc),
         )

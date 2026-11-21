@@ -2,17 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from pydantic import BaseModel
 
-from llm_reliability_analytics.models.domain import EvaluationMode, OracleType
+from llm_reliability_analytics.models.domain import EvaluationMode
 from llm_reliability_analytics.runner.llm_client import OPTIONAL_OLLAMA_MODELS, RECOMMENDED_OLLAMA_MODELS
 from llm_reliability_analytics.runner.openai_compatible_client import configured_base_url
-
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
 
 class DatasetOption(BaseModel):
     id: str
@@ -26,10 +20,7 @@ class EvaluationJobOptionsResponse(BaseModel):
     providers: list[str]
     models_by_provider: dict[str, list[str]]
     datasets: list[DatasetOption]
-    dataset_paths: list[str]
-    dataset_versions: list[str]
     oracle_profiles: list[str]
-    oracle_types: list[str]
     evaluation_modes: list[str]
     openai_compatible_base_url: str
 
@@ -43,10 +34,6 @@ def get_evaluation_job_options() -> EvaluationJobOptionsResponse:
         "local": ollama_models,
         "openai_compatible": [],  # Free-text model names; the configured endpoint decides what exists.
     }
-    dataset_paths = _discover_dataset_paths()
-    dataset_versions = _discover_dataset_versions(dataset_paths)
-    oracle_profiles = _discover_oracle_profiles()
-    oracle_types = [oracle.value for oracle in OracleType]
     evaluation_modes = [mode.value for mode in EvaluationMode]
     return EvaluationJobOptionsResponse(
         providers=providers,
@@ -88,58 +75,10 @@ def get_evaluation_job_options() -> EvaluationJobOptionsResponse:
                 evaluation_mode="regression",
             ),
         ],
-        dataset_paths=dataset_paths,
-        dataset_versions=dataset_versions,
-        oracle_profiles=oracle_profiles,
-        oracle_types=oracle_types,
+        oracle_profiles=["default"],  # Oracle choice lives on each dataset row, not a profile.
         evaluation_modes=evaluation_modes,
         openai_compatible_base_url=configured_base_url(),
     )
-
-
-def _discover_oracle_profiles() -> list[str]:
-    # Oracle selection and configuration belong to each dataset row, not a profile.
-    return ["default"]
-
-
-def _discover_dataset_paths() -> list[str]:
-    discovered: list[str] = []
-    for directory in (PROJECT_ROOT / "data" / "raw", PROJECT_ROOT / "data" / "adversarial"):
-        if not directory.exists():
-            continue
-        for path in sorted(directory.glob("*.jsonl")):
-            discovered.append(path.relative_to(PROJECT_ROOT).as_posix())
-    if not discovered:
-        discovered = ["sample_test_cases.jsonl"]
-    return _dedupe_ordered(discovered)
-
-
-def _discover_dataset_versions(dataset_paths: list[str]) -> list[str]:
-    versions: list[str] = ["v1", "trace_replay_v1"]
-    for relative_path in dataset_paths:
-        path = PROJECT_ROOT / relative_path
-        if not path.exists():
-            continue
-        try:
-            with path.open(encoding="utf-8") as handle:
-                for index, line in enumerate(handle):
-                    if index >= 200:
-                        break
-                    raw = line.strip()
-                    if not raw:
-                        continue
-                    try:
-                        payload = json.loads(raw)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(payload, dict):
-                        continue
-                    dataset_version = payload.get("dataset_version")
-                    if isinstance(dataset_version, str) and dataset_version.strip():
-                        versions.append(dataset_version.strip())
-        except OSError:
-            continue
-    return sorted({item.strip() for item in versions if item.strip()})
 
 
 def _dedupe_ordered(items: list[str]) -> list[str]:

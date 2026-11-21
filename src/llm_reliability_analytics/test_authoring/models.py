@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from llm_reliability_analytics.models.domain import DifficultyLevel, TestCase, TestSource
+from llm_reliability_analytics.models.domain import DifficultyLevel
 
 
 class CandidateStatus(str, Enum):
@@ -31,22 +31,3 @@ class CandidateTestCase(BaseModel):
     metadata: dict[str, object] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    def to_test_case(self, dataset_version: str, test_source: TestSource = TestSource.SYNTHETIC) -> TestCase:
-        return TestCase(
-            id=f"candidate-{self.candidate_id}",
-            test_source=test_source,
-            dataset_version=dataset_version,
-            category=self.category,
-            difficulty=self.difficulty,
-            prompt=self.prompt,
-            expected_answer=self.expected_answer,
-            oracle_type=self.oracle_type,
-            metadata={
-                **self.metadata,
-                "candidate_id": self.candidate_id,
-                "candidate_status": self.status.value,
-                "candidate_quality_score": self.quality_score,
-                "candidate_rationale": self.rationale,
-                "candidate_source_context": self.source_context,
-            },
-        )

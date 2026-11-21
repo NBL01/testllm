@@ -32,9 +32,9 @@ These are source-level capabilities, not blanket acceptance claims.
 | Catalog and validation | Backend-listed datasets, mock modes, native Ollama (`127.0.0.1:11434`), and `openai_compatible` endpoints (env-configured base URL and key, free-text models); only dataset-defined default oracle profile |
 | Evidence | Original expected/actual answer and oracle configuration; replay review requirement for incomplete legacy data |
 | Metrics | Disaggregated headline metrics: pass rate, pass^k, pass@k, schema-only pass rate, latency p50/p95; pass^k/pass@k N/A unless every case has k ≥ 2 attempts; no composite score |
-| Comparison | Client comparison at `/compare` using POST `/internal/metrics/eligibility` and `/internal/metrics/compare`; 409 rejection on configuration/coverage mismatches; real-to-real provider variation permitted (`ollama` vs `openai_compatible`); mock vs real refused; metric deltas, category pass rates, regressions/improvements |
+| Comparison | Client comparison at `/compare` using POST `/internal/metrics/compare`; 409 rejection (with the eligibility issues) on configuration/coverage mismatches; real-to-real provider variation permitted (`ollama` vs `openai_compatible`); mock vs real refused; metric deltas, category pass rates, regressions/improvements |
 | Exports | Markdown context, labeled JSON samples, full quoted/formula-neutralized failed-attempt CSV |
-| Internal boundary | POST `/internal/metrics/eligibility` and POST `/internal/metrics/compare`; unused internal/admin routes removed; candidate generation and direct batch runs preserved as offline CLI modules |
+| Internal boundary | POST `/internal/metrics/compare` (eligibility issues in the 409 body); unused internal/admin routes removed; candidate generation and direct batch runs preserved as offline CLI modules |
 | Dependencies and build | Python dependencies installed from `requirements.lock` (exact tested set; CI uses it); `requirements.txt` keeps version ranges for deliberate upgrades |
 | Ownership and migration | Single-API advisory lock before recovery; UTC timestamps and explicit legacy timezone/file backup |
 

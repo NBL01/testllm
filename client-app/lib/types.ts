@@ -168,11 +168,8 @@ type DatasetOption = {
 export type JobOptionsResponse = {
   providers: string[];
   models_by_provider: Record<string, string[]>;
-  dataset_paths: string[];
   datasets: DatasetOption[];
-  dataset_versions: string[];
   oracle_profiles: string[];
-  oracle_types: string[];
   evaluation_modes: string[];
   openai_compatible_base_url?: string;
 };
@@ -182,10 +179,8 @@ export type HealthResponse = {
 };
 
 export type ModelsResponse = {
-  provider: string;
   ollama_reachable: boolean;
   installed_models: string[];
-  recommended_models: string[];
   available_models: string[];
   error: string | null;
 };

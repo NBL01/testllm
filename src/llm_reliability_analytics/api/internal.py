@@ -20,7 +20,7 @@ router = APIRouter(prefix="/internal", tags=["internal"])
 
 
 class MetricsRequest(BaseModel):
-    run_ids: list[str] = Field(min_length=1)
+    run_ids: list[str] = Field(min_length=2, max_length=2, description="Baseline, then candidate.")
 
     @field_validator("run_ids")
     @classmethod
@@ -146,16 +146,8 @@ def _case_changes(baseline: list[TestResult], candidate: list[TestResult]) -> di
             "improvements": [item for item in changes if item["candidate_passed"] > item["baseline_passed"]]}
 
 
-@router.post("/metrics/eligibility")
-def metrics_eligibility(request: MetricsRequest) -> dict[str, Any]:
-    runs, results = _metric_context(request.run_ids)
-    return _eligibility(runs, results)
-
-
 @router.post("/metrics/compare")
 def metrics_compare(request: MetricsRequest) -> dict[str, Any]:
-    if len(request.run_ids) != 2:
-        raise HTTPException(status_code=422, detail="Exactly two run_ids are required.")
     runs, results = _metric_context(request.run_ids)
     eligibility = _eligibility(runs, results)
     if not eligibility["eligible"]:

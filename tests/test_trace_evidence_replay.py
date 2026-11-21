@@ -101,7 +101,7 @@ def test_tied_timestamps_have_stable_attempt_order_and_pages():
 @pytest.mark.parametrize("actual", ["The answer is Paris", "Paris is wrong; London is correct"])
 @pytest.mark.parametrize("metadata,passes", [({}, True), ({"strict_exact": True}, False),
     ({"strict_exact": True, "allow_substring_match": True}, True)])
-def test_exact_match_strict_metadata_versus_legacy_lenient(metadata, passes, actual):
+def test_exact_match_strict_metadata_versus_default_lenient(metadata, passes, actual):
     evaluation = evaluate_with_oracle("exact_match", "Paris", actual, metadata)
     assert evaluation.is_correct is passes
 
