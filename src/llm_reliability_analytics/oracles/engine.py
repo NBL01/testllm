@@ -301,6 +301,24 @@ class NumericToleranceOracle(BaseOracle):
                 },
             )
 
+        if metadata.get("strict_output") and _parse_bare_number(actual_answer or "") is None:
+            # "Output ONLY the number": extra text is a format failure, and the first number in
+            # free text ("24 - 13 = 11" -> 24) says nothing about the model's arithmetic.
+            return OracleEvaluation(
+                is_correct=False,
+                score=0.0,
+                error_type="format_violation",
+                explanation=f"strict_output requires only a number; the answer contains other text "
+                            f"(first number found: {actual_value:g}).",
+                details={
+                    "expected_value": expected_values,
+                    "actual_value": actual_value,
+                    "absolute_difference": None,
+                    "tolerance": tolerance,
+                    "strict_output": True,
+                },
+            )
+
         closest_expected = min(expected_values, key=lambda value: abs(value - actual_value))
         difference = abs(closest_expected - actual_value)
         is_correct = difference <= tolerance
@@ -558,6 +576,13 @@ def evaluate_with_oracle(
 ) -> OracleEvaluation:
     oracle = OracleFactory.create(oracle_type)
     return oracle.evaluate(expected_answer=expected_answer, actual_answer=actual_answer, metadata=metadata)
+
+
+def _parse_bare_number(value: str) -> float | None:
+    try:
+        return float(value.strip())
+    except (AttributeError, ValueError):
+        return None
 
 
 def _parse_number(value: str) -> float | None:

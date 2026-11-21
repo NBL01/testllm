@@ -389,6 +389,9 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
             metadata.setdefault("must_contain", [test_case.expected_answer])
             metadata.setdefault("forbidden_keywords", [])
             metadata.setdefault("regex_constraints", [])
+        if oracle_type == "numeric_tolerance" and metadata.get("strict_output"):
+            # Provenance: earlier runs ignored strict_output, so their evidence must not compare as equal.
+            metadata["strict_output_enforced"] = True
 
         # If generation failed, keep that failure trace and skip oracle execution.
         if result.error_type is not None and not (result.actual_answer or "").strip():
@@ -455,7 +458,7 @@ def _taxonomy_from_error_type(error_type: str | None) -> ErrorTaxonomy:
     normalized = error_type.strip().lower()
     if normalized in {"wrong_answer", "incorrect_answer"}:
         return ErrorTaxonomy.NONE
-    if normalized in {"json_parse_error", "json_schema_validation_error", "numeric_parse_error"}:
+    if normalized in {"json_parse_error", "json_schema_validation_error", "numeric_parse_error", "format_violation"}:
         return ErrorTaxonomy.PARSING
     if normalized in {"invalid_regex_pattern", "invalid_oracle_config"}:
         return ErrorTaxonomy.VALIDATION

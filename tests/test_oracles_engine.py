@@ -218,3 +218,33 @@ def test_oracle_factory_selects_correct_type() -> None:
 def test_oracle_factory_supports_new_oracles() -> None:
     assert isinstance(OracleFactory.create("semantic_similarity"), SemanticSimilarityOracle)
     assert isinstance(OracleFactory.create("composite_rule"), CompositeRuleOracle)
+
+
+def test_numeric_strict_output_rejects_extra_text_as_format_violation() -> None:
+    oracle = NumericToleranceOracle()
+    strict = {"tolerance": 0.0, "strict_output": True}
+    # Correct final answer inside an equation: a format failure, not a wrong calculation.
+    shown_work = oracle.evaluate(expected_answer="11", actual_answer="24 - 13 = 11", metadata=strict)
+    assert (shown_work.is_correct, shown_work.error_type) == (False, "format_violation")
+    assert "first number found: 24" in shown_work.explanation
+    # The first-number fallback used to pass non-compliant text like this one.
+    accidental = oracle.evaluate(expected_answer="11", actual_answer="11, since 24 - 13 = 11", metadata=strict)
+    assert accidental.is_correct is False
+    assert oracle.evaluate(expected_answer="11", actual_answer=" 11 ", metadata=strict).is_correct is True
+    # Without strict_output the legacy lenient extraction is unchanged.
+    assert oracle.evaluate(expected_answer="11", actual_answer="11, since 24 - 13 = 11", metadata={"tolerance": 0.0}).is_correct is True
+
+
+def test_strict_numeric_scoring_records_enforcement_in_effective_config() -> None:
+    import json
+    from llm_reliability_analytics.models.domain import TestCase as Case, TestResult as Result
+    from llm_reliability_analytics.workflow.service import score_results_with_oracles
+
+    case = Case(id="n1", category="math", difficulty="easy", prompt="24 - 13?", expected_answer="11",
+                oracle_type="numeric_tolerance", metadata={"tolerance": 0.0, "strict_output": True})
+    result = Result(run_id="r", test_case_id="n1", category="math", actual_answer="24 - 13 = 11",
+                    is_correct=False, score=0.0, latency_ms=1.0)
+    score_results_with_oracles(test_cases=[case], results=[result])
+    assert result.error_type == "format_violation" and result.error_taxonomy.value == "parsing"
+    assert json.loads(result.oracle_details_json)["input_config"]["strict_output_enforced"] is True
+    assert "strict_output_enforced" not in case.metadata  # the frozen case itself is untouched

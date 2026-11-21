@@ -149,6 +149,12 @@ Headline metrics are disaggregated:
 The legacy-v1 composite ("overall reliability score") is still computed and shown, labelled
 "Legacy composite", only for comparing with older runs; it is not the main score.
 
+`numeric_tolerance` cases marked `strict_output` (as in the v2 benchmark) fail any
+answer that is not just a number as `format_violation`; a shown calculation such as
+`24 - 13 = 11` is a format failure, not a wrong answer. Runs scored before this rule
+ignored `strict_output`; their recorded oracle configuration differs, so comparisons
+with them are refused rather than shown as regressions.
+
 Comparison eligibility checks persisted settings, dataset hash, and case/attempt-keyed oracle configuration.
 Unknown configuration evidence is `research_only` and excluded from comparisons.
 Read `measurement_notes`, `repeated_case_count`, `schema_case_count`,
