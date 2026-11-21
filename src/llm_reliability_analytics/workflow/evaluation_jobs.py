@@ -225,6 +225,8 @@ def duplicate_job(job_id: str, provider: str | None = None, model_name: str | No
     which keeps the pair comparable by construction."""
     source = get_job(job_id)
     new_provider = provider or source.provider
+    if new_provider != source.provider and not (model_name or "").strip():
+        raise ValueError("model_name is required when changing the provider.")
     new_model = (model_name or "").strip() or source.model_name
     if (new_provider, new_model) != (source.provider, source.model_name):
         _validate_model_choice(new_provider, new_model)

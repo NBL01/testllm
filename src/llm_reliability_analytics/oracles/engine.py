@@ -58,6 +58,31 @@ class ExactMatchOracle(BaseOracle):
                 },
             )
 
+        actual_number = _parse_bare_number(actual_answer or "")
+        expected_numbers = [_parse_bare_number(answer) for answer in valid_answers]
+        if actual_number is not None and expected_numbers and all(value is not None for value in expected_numbers):
+            # Normalization drops signs ("-11" -> "11"), so plain numbers are compared as numbers.
+            closest = min(expected_numbers, key=lambda value: abs(value - actual_number))
+            difference = abs(closest - actual_number)
+            matched = difference <= number_tolerance
+            return OracleEvaluation(
+                is_correct=matched,
+                score=1.0 if matched else 0.0,
+                error_type=None if matched else "wrong_answer",
+                explanation="Numeric value matches expected answer within tolerance." if matched
+                else f"Numeric answer differs from the expected value by {difference:g}.",
+                details={
+                    "expected_normalized": normalized_candidates,
+                    "actual_normalized": actual_normalized,
+                    "comparison_result": "numeric_equivalent" if matched else "numeric_mismatch",
+                    "expected_value": closest,
+                    "actual_value": actual_number,
+                    "absolute_difference": difference,
+                    "number_tolerance": number_tolerance,
+                    "strict_exact": strict_exact,
+                },
+            )
+
         matched_candidate = next((candidate for candidate in normalized_candidates if actual_normalized == candidate), None)
         if matched_candidate is not None:
             return OracleEvaluation(

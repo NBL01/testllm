@@ -261,3 +261,12 @@ def test_exact_match_strict_output_rejects_answers_embedded_in_sentences() -> No
     assert oracle.evaluate(expected_answer="Lisbon", actual_answer="Portugal's capital is Lisbon.").is_correct is True
     assert oracle.evaluate(expected_answer="Lisbon", actual_answer="Portugal's capital is Lisbon.",
                            metadata={**strict, "allow_substring_match": True}).is_correct is True
+
+
+def test_exact_match_compares_plain_numbers_numerically() -> None:
+    oracle = ExactMatchOracle()
+    assert oracle.evaluate(expected_answer="11", actual_answer="-11").is_correct is False  # sign was normalized away
+    assert oracle.evaluate(expected_answer="-11", actual_answer="11").is_correct is False
+    assert oracle.evaluate(expected_answer="11", actual_answer="11.0").is_correct is True
+    assert oracle.evaluate(expected_answer="10", actual_answer="1e1").is_correct is True
+    assert oracle.evaluate(expected_answer="Paris", actual_answer="paris").is_correct is True  # text path unchanged
