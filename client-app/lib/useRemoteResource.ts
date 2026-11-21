@@ -4,36 +4,43 @@ import { useEffect, useRef, useState } from "react";
 
 /** Query changes discard old data; refresh/poll keeps the last successful snapshot. */
 export function useRemoteResource<T>(key: string | null, load: () => Promise<T>, refresh = 0, pollMs = 0) {
-  const [snapshot, setSnapshot] = useState<{ key: string | null; data: T | null; error: string; loading: boolean }>({
-    key: null, data: null, error: "", loading: true
+  const revision = JSON.stringify([key, refresh, pollMs]);
+  const [snapshot, setSnapshot] = useState<{ key: string | null; revision: string; data: T | null; error: string; loading: boolean }>({
+    key: null, revision: "", data: null, error: "", loading: true
   });
-  const latest = useRef({ key, load });
-  latest.current = { key, load };
+  const latest = useRef({ revision, load });
+  latest.current = { revision, load };
 
   useEffect(() => {
     if (key === null) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
+    const isCurrent = () => active && latest.current.revision === revision;
     async function read() {
-      setSnapshot(previous => ({ key, data: previous.key === key ? previous.data : null, error: "", loading: true }));
+      if (!isCurrent()) return;
+      setSnapshot(previous => ({ key, revision, data: previous.key === key ? previous.data : null,
+        error: previous.key === key ? previous.error : "", loading: true }));
       try {
         const data = await latest.current.load();
-        if (active && latest.current.key === key) setSnapshot({ key, data, error: "", loading: false });
+        if (isCurrent()) setSnapshot({ key, revision, data, error: "", loading: false });
       } catch (error) {
-        if (active && latest.current.key === key) setSnapshot(previous => ({
-          key, data: previous.key === key ? previous.data : null,
+        if (isCurrent()) setSnapshot(previous => ({
+          key, revision, data: previous.key === key ? previous.data : null,
           error: error instanceof Error ? error.message : "Request failed. Please refresh to retry.", loading: false
         }));
       } finally {
         // Schedule after completion: slow GETs never overlap or starve the display.
-        if (active && pollMs) timer = setTimeout(() => void read(), pollMs);
+        if (isCurrent() && pollMs) timer = setTimeout(() => void read(), pollMs);
       }
     }
     void read();
     return () => { active = false; clearTimeout(timer); };
-  }, [key, refresh, pollMs]);
+  }, [key, revision, pollMs]);
 
   if (key === null) return { data: null, error: "", loading: false };
   if (snapshot.key !== key) return { data: null, error: "", loading: true };
+  // Invalidate during render, not in the later effect: actions must stay disabled
+  // between a POST settling and its persisted-state refresh starting.
+  if (snapshot.revision !== revision) return { ...snapshot, loading: true };
   return snapshot;
 }

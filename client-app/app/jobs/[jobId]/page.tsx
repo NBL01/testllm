@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   cancelJob, duplicateJob, getJob, getJobClientReport, getJobFailedCases, getJobFailedCasesCsv,
   getJobReport, getJobSummary, getJobTraces, queueJob, retryJob, runJob
@@ -58,7 +58,8 @@ function Evidence({ trace }: { trace: TraceRecord }) {
   );
 }
 
-export default function JobDetailPage({ params }: { params: { jobId: string } }) {
+export default function JobDetailPage() {
+  const params = useParams<{ jobId: string }>();
   // A route change owns fresh action locks, filters, and async lifetimes.
   return <JobDetail key={params.jobId} jobId={params.jobId} />;
 }
@@ -117,15 +118,19 @@ function JobDetail({ jobId }: { jobId: string }) {
     actionLock.current = true;
     setAction(label);
     setActionError("");
+    let navigating = false;
     try {
       const result = await execute();
-      if (mounted.current && navigate) router.push(`/jobs/${(result as { job_id: string }).job_id}`);
+      if (mounted.current && navigate) {
+        router.push(`/jobs/${(result as { job_id: string }).job_id}`);
+        navigating = true;
+      }
     } catch (error) {
       if (mounted.current) setActionError(error instanceof Error ? error.message : `${label} failed.`);
     } finally {
       // Even a rejected POST can have changed persisted state.
-      if (mounted.current) { refreshAll(); setAction(""); }
-      actionLock.current = false;
+      if (mounted.current) { refreshAll(); if (!navigating) setAction(""); }
+      if (!navigating) actionLock.current = false;
     }
   }
 
@@ -209,7 +214,7 @@ function JobDetail({ jobId }: { jobId: string }) {
           {summary ? <>
             <div className="form-grid">
               <div><strong>Attempts</strong><div>{summary.report.total_test_cases}</div></div>
-              <div><strong>Unique cases</strong><div>{summary.report.unique_case_count ?? "Not reported"}</div></div>
+              <div><strong>Unique cases</strong><div>{summary.report.unique_test_cases ?? "Not reported"}</div></div>
               <div><strong>Passed attempts</strong><div>{summary.report.passed}</div></div>
               <div><strong>Failed attempts</strong><div>{summary.report.failed}</div></div>
               <div><strong>Accuracy</strong><div>{asNumber(summary.report.accuracy * 100, 2)}%</div></div>
@@ -219,7 +224,7 @@ function JobDetail({ jobId }: { jobId: string }) {
             <p className="meta">Metric version: <code>{summary.report.metric_version ?? "Not reported; eligibility is unknown"}</code>. A heuristic score is not a guarantee of reliability.</p>
             <p className="meta">Repeatability: {summary.report.repeated_case_count == null ? "eligibility not reported" : summary.report.repeated_case_count === 0 ? "not measured (no repeated cases)" : `${summary.report.repeated_case_count} repeated cases eligible`}.</p>
             <p className="meta">Schema compliance: {summary.report.schema_case_count == null ? "eligibility not reported" : summary.report.schema_case_count === 0 ? "not measured (no schema cases)" : `${summary.report.schema_case_count} schema cases eligible`}.</p>
-            <p className="meta">Latency sources: {summary.report.latency_sources?.join(", ") || "not reported"}. {job.provider === "mock" && "Mock latency is synthetic, not real model performance."}</p>
+            <p className="meta">Latency sources: {Object.entries(summary.report.latency_sources ?? {}).map(([source, count]) => `${source}: ${count}`).join(", ") || "not reported"}. Counts are attempts. {job.provider === "mock" && "Mock latency is synthetic, not real model performance."}</p>
             {!!summary.report.measurement_notes?.length && <ul className="meta">{summary.report.measurement_notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
             {job.status !== "completed" && <p className="meta">Partial evaluation: these metrics are not a completed-run result.</p>}
           </> : !summaryResource.error && <p className="meta">{summaryResource.loading ? "Loading summary..." : emptyEvidence}</p>}

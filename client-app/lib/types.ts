@@ -22,7 +22,7 @@ export type EvaluationJob = {
   linked_run_id: string | null;
   source_job_id?: string | null;
   dataset_sha256?: string | null;
-  dataset_snapshot?: string | null;
+  dataset_snapshot?: Record<string, unknown>[];
   queued_at?: string | null;
   failure_reason: string | null;
   created_at: string;
@@ -82,8 +82,8 @@ export type JobSummaryResult = {
     repeated_case_count?: number;
     schema_case_count?: number;
     measurement_notes?: string[];
-    latency_sources?: string[];
-    unique_case_count?: number;
+    latency_sources?: Record<string, number>;
+    unique_test_cases?: number;
   };
 };
 

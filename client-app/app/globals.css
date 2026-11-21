@@ -23,7 +23,8 @@ body {
   background: radial-gradient(circle at top right, #d7f0ea 0%, var(--bg) 48%),
     radial-gradient(circle at bottom left, #ffe8cc 0%, transparent 44%),
     var(--bg);
-  font-family: var(--font-heading), "Avenir Next", "Segoe UI", sans-serif;
+  /* System stacks keep `next build` offline-reproducible (no font download). */
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
 }
 
 a {
@@ -59,6 +60,7 @@ a {
 }
 
 .panel {
+  min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -71,6 +73,19 @@ a {
   gap: 1rem;
 }
 
+.grid > *,
+.form-grid > *,
+.hero > * {
+  min-width: 0;
+}
+
+.form-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+
 .grid-2 {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
@@ -79,6 +94,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 0.6rem;
+  align-items: center;
 }
 
 button,
@@ -89,6 +105,21 @@ button,
   font: inherit;
   cursor: pointer;
   transition: transform 120ms ease, box-shadow 120ms ease;
+  min-height: 44px;
+  display: inline-block;
+  text-align: center;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  transform: none;
+  box-shadow: none;
+}
+
+:focus-visible {
+  outline: 3px solid var(--brand-2);
+  outline-offset: 3px;
 }
 
 button:hover,
@@ -132,7 +163,7 @@ label {
 
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
   gap: 0.8rem;
 }
 
@@ -149,6 +180,7 @@ label {
   font-size: 0.82rem;
   background: #ebf7f6;
   color: #0f6059;
+  overflow-wrap: anywhere;
 }
 
 .status-running {
@@ -196,7 +228,8 @@ th {
 
 code,
 pre {
-  font-family: var(--font-mono), "SF Mono", "Consolas", monospace;
+  font-family: "SF Mono", "Consolas", monospace;
+  overflow-wrap: anywhere;
 }
 
 pre {
@@ -216,4 +249,62 @@ pre {
 .success {
   color: var(--success);
   font-weight: 500;
+}
+
+.meta,
+.error,
+.evidence {
+  overflow-wrap: anywhere;
+}
+
+.evidence-list {
+  margin-top: 1rem;
+}
+
+.evidence {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background: #f8fbf7;
+}
+
+.evidence summary {
+  cursor: pointer;
+  min-height: 44px;
+  padding: 0.4rem 0;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+.checkbox-label input {
+  width: 20px;
+  height: 20px;
+}
+
+@media (max-width: 480px) {
+  .btn-row > label {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .btn-row > .btn {
+    flex: 1 1 auto;
+  }
+
+  .grid-2 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button,
+  .btn {
+    transition: none;
+    transform: none;
+  }
 }

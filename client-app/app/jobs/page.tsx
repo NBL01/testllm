@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { getQueueStats, listJobs, processQueue } from "@/lib/api";
 import { useRemoteResource } from "@/lib/useRemoteResource";
+import type { QueueProcessResult } from "@/lib/types";
 
 function statusClass(status: string): string {
   if (status === "running") return "pill status-running";
@@ -22,6 +23,7 @@ export default function JobsPage() {
   const [jobsOffset, setJobsOffset] = useState(0);
   const [error, setError] = useState<string>("");
   const [processing, setProcessing] = useState(false);
+  const [queueOutcome, setQueueOutcome] = useState<QueueProcessResult | null>(null);
   const processLock = useRef(false);
   const mounted = useRef(true);
   const [refresh, setRefresh] = useState(0);
@@ -42,8 +44,10 @@ export default function JobsPage() {
     processLock.current = true;
     setProcessing(true);
     setError("");
+    setQueueOutcome(null);
     try {
-      await processQueue(10);
+      const outcome = await processQueue(10);
+      if (mounted.current) setQueueOutcome(outcome);
     } catch (err) {
       if (mounted.current) setError(err instanceof Error ? err.message : "Failed to process queue.");
     } finally {
@@ -59,8 +63,8 @@ export default function JobsPage() {
 
   const canPrevious = jobsOffset > 0;
   const canNext = jobsOffset + jobs.length < totalJobs;
-  const showingFrom = totalJobs === 0 ? 0 : jobsOffset + 1;
-  const showingTo = jobsOffset + jobs.length;
+  const showingFrom = jobs.length ? jobsOffset + 1 : 0;
+  const showingTo = jobs.length ? jobsOffset + jobs.length : 0;
 
   return (
     <main className="page">
@@ -83,6 +87,13 @@ export default function JobsPage() {
       </section>
 
       <section className="panel">
+        {queueOutcome && <div role="status">
+          <p className="meta">Queue processing finished: {queueOutcome.processed_count} attempted, {queueOutcome.results.length} succeeded,
+            {" "}{queueOutcome.failures?.length || 0} failed.</p>
+          {!!queueOutcome.failures?.length && <ul className="error">{queueOutcome.failures.map((failure, index) => <li key={`${failure.job_id}:${index}`}>
+            <Link href={`/jobs/${failure.job_id}`}><u>{failure.job_id}</u></Link>: {failure.error || failure.failure_reason || failure.detail || "Evaluation failed"}
+          </li>)}</ul>}
+        </div>}
         <div className="btn-row" style={{ marginBottom: "0.8rem" }}>
           <label className="meta" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}>
             Search

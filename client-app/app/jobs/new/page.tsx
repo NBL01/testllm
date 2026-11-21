@@ -151,7 +151,7 @@ export default function NewJobPage() {
   }, [modelsSnapshot?.available_models, options?.models_by_provider, state.provider]);
 
   const selectedModelMayBeMissing = useMemo(() => {
-    if (state.provider !== "ollama") return false;
+    if (state.provider !== "ollama" && state.provider !== "local") return false;
     if (!statusPanel.modelsEndpointAvailable || !modelsSnapshot) return false;
     if (!modelsSnapshot.ollama_reachable) return true;
     if (!state.model_name.trim()) return true;
