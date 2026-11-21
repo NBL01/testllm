@@ -1,8 +1,9 @@
 # MVP Release Validation
 
-Status: **release acceptance pending**. Automated gates and a live local-model
-check passed on 2026-11-21 against code commit `65e134e`; manual accessibility
-checks, goal-by-goal acceptance and a release decision are still open. Nothing here
+Status: **release acceptance pending**. Automated gates and live local-model
+checks passed on 2026-11-21 (latest code `852e336`, GitHub Actions run 44891276879
+green); goal-by-goal evidence is below. A manual screen-reader check and the release
+decision are still open. Nothing here
 approves a merge, release or deployment.
 
 ## 2026-11-21 second round: product changes and evidence
@@ -25,6 +26,28 @@ of the Streamlit console and its routes, and an exact `requirements.lock`.
 
 The UI coexistence and Streamlit rows in the first run below are historical: that
 console no longer exists.
+
+## Real-model benchmark (2026-11-21)
+
+The 300-case v2 set (7 categories, 5 oracle types, every case `strict_output`), 2
+attempts per case, local Ollama on this workstation, run through the asynchronous job
+API and compared on `/compare`. 1,200 model calls took 349 s.
+
+| Model | Pass rate | pass@2 | pass^2 | Schema-only | p50 / p95 | Format violations |
+| --- | --- | --- | --- | --- | --- | --- |
+| qwen2.5:0.5b | 71.5% | 73.0% | 70.0% | 100% | 128 / 205 ms | 20 |
+| llama3.2:1b | 49.3% | 49.3% | 49.3% | 0% | 215 / 1230 ms | 130 |
+
+Comparing qwen (baseline) with llama: 97 cases regressed and 30 improved.
+
+The first benchmark run, before `strict_output` was enforced, reported llama at 60.0%
+and ahead on `exact_match` (75% vs 61%). A third of those llama passes were sentences
+containing the answer, and every numeric failure was a shown calculation such as
+`24 - 13 = 11` scored against its first number. Enforcing the cases' own
+`strict_output` reclassified them as format violations (fixes `f0e3208`, `77637e2`);
+the old and new runs are refused as non-comparable because their recorded oracle
+configuration differs. These are small local models on one machine; the numbers
+illustrate the tooling, not a model ranking.
 
 ## Goal-by-goal evidence (G01-G18)
 
