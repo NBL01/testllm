@@ -97,7 +97,8 @@ function JobDetail({ jobId }: { jobId: string }) {
 
   const jobResource = useRemoteResource(jobId, () => getJob(jobId), refresh, action || poll ? 3000 : 0);
   const job = jobResource.data;
-  const reviewKey = job?.linked_run_id ? `${jobId}:${job.linked_run_id}` : null;
+  // Results are written when a run ends, so there is no evidence to fetch while it executes.
+  const reviewKey = job?.linked_run_id && !["queued", "running"].includes(job.status) ? `${jobId}:${job.linked_run_id}` : null;
   const reviewPoll = action || poll ? 3000 : 0;
   const reviewRevision = `${reviewKey}:${job?.status}`;
   const summaryResource = useRemoteResource(reviewKey ? `${reviewRevision}:summary` : null, () => getJobSummary(jobId), refresh, reviewPoll);
@@ -262,8 +263,8 @@ function JobDetail({ jobId }: { jobId: string }) {
                 sub={summary.report.pass_at_k == null ? "needs 2+ attempts per case" : "cases passing at least once"} />
               {summary.report.schema_pass_rate != null && <Kpi label="Schema pass rate" value={formatPercent(summary.report.schema_pass_rate, 1)} sub={`${summary.report.schema_attempt_count ?? 0} json_schema attempts`} />}
               <Kpi label="Unique cases" value={summary.report.unique_test_cases ?? "Not reported"} sub={`${summary.report.total_test_cases} attempts`} />
-              <Kpi label="Latency p50 / p95" value={`${formatMs(summary.report.p50_latency_ms)} / ${formatMs(summary.report.p95_latency_ms)}`}
-                sub={job.provider === "mock" ? "simulated (mock)" : `mean ${formatMs(summary.report.average_latency_ms)}`} />
+              <Kpi label="Latency p50" value={formatMs(summary.report.p50_latency_ms)}
+                sub={`p95 ${formatMs(summary.report.p95_latency_ms)} · ${job.provider === "mock" ? "simulated (mock)" : `mean ${formatMs(summary.report.average_latency_ms)}`}`} />
             </div>
             {!!summary.report.category_reports?.length && <>
               <h3 className="section-title">Pass rate by category</h3>
@@ -274,7 +275,7 @@ function JobDetail({ jobId }: { jobId: string }) {
             {!!Object.keys(summary.report.error_distribution ?? {}).length && <>
               <h3 className="section-title">Failure types</h3>
               <Bars neutral rows={Object.entries(summary.report.error_distribution ?? {}).sort((a, b) => b[1] - a[1]).map(([type, count]) => ({
-                label: type, rate: summary.report.failed ? count / summary.report.failed : 0, detail: `${count} attempts`
+                label: type, rate: summary.report.failed ? count / summary.report.failed : 0, detail: `${count} attempt${count === 1 ? "" : "s"}`
               }))} />
             </>}
             <details className="notes">

@@ -95,6 +95,9 @@ test('running job shows live progress and can be stopped; stop requests are anno
   assert.match(running, /3 of 10 attempts \(30%\)/);
   assert.match(running, /role="progressbar"[^>]*aria-valuemax="10" aria-valuenow="3"/);
   assert.match(running, />Stop Run<\/button>/);
+  // Evidence is written when the run ends: no summary request (and no 'not found' error) while running.
+  assert.match(running, /<h2>Summary Metrics<\/h2><p class="meta">Evaluation is in progress/);
+  assert.doesNotMatch(running, /class="kpi-grid"/);
   const stopping = renderDetail(report, {}, { status: 'running', progress_done: 3, progress_total: 10, stop_requested: true });
   assert.match(stopping, /Stopping after the current attempt/);
   assert.doesNotMatch(stopping, />Stop Run</);

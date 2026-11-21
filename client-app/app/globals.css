@@ -632,6 +632,12 @@ pre {
   color: var(--muted);
 }
 
+@media (max-width: 480px) {
+  .topbar-nav a {
+    padding: 0 0.5rem;
+  }
+}
+
 @media (max-width: 640px) {
   /* Rows become cards: job + status, then model + result; secondary columns drop. */
   .job-table thead,
