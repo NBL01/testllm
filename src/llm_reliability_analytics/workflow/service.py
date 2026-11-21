@@ -36,7 +36,7 @@ from llm_reliability_analytics.runner.llm_client import (
     resolve_execution_mode,
 )
 from llm_reliability_analytics.runner.ollama_client import OllamaLLMClient
-from llm_reliability_analytics.runner.test_runner import TestRunner
+from llm_reliability_analytics.runner.test_runner import RunAborted, TestRunner
 from llm_reliability_analytics.storage.duckdb_store import (
     RunAggregatedSummary,
     create_test_run,
@@ -281,7 +281,11 @@ def _run_prepared_test_cases(
         )
 
         runner = TestRunner(llm_client=llm_client)
-        results = runner.run(test_cases, run_id=run.id, repeats_per_case=repeats_per_case, on_attempt=on_attempt)
+        aborted: RunAborted | None = None
+        try:
+            results = runner.run(test_cases, run_id=run.id, repeats_per_case=repeats_per_case, on_attempt=on_attempt)
+        except RunAborted as exc:
+            aborted, results = exc, exc.partial_results
         latency_source = "mock_simulated" if normalized_run_mode == "mock" else "observed"
         for result in results:
             if normalized_run_mode == "mock":
@@ -292,6 +296,9 @@ def _run_prepared_test_cases(
         score_results_with_oracles(test_cases=test_cases, results=results)
         insert_batch_results(results, finalize=False)
         capture_traces_for_run(results)
+        if aborted is not None:
+            # Keep the evidence gathered before the provider failed, then fail the run with its error.
+            raise aborted.cause
 
         summaries = fetch_aggregated_summaries(run.id)
         if not summaries:

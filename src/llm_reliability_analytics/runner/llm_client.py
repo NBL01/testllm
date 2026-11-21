@@ -36,6 +36,19 @@ class LLMRequestError(LLMClientError):
     """Raised for request/response failures that are not connectivity issues."""
 
 
+class LLMConnectionError(LLMServiceUnavailableError):
+    """The provider could not be reached at all, as opposed to answering slowly."""
+
+
+class LLMAuthenticationError(LLMRequestError):
+    """The provider rejected the configured credentials."""
+
+
+# Configuration/environment failures say nothing about model quality: a run aborts on them
+# instead of recording every remaining attempt as a failure.
+FATAL_PROVIDER_ERRORS = (LLMConnectionError, LLMModelNotFoundError, LLMAuthenticationError)
+
+
 @dataclass(slots=True)
 class LLMGeneration:
     text: str

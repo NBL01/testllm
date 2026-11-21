@@ -3,8 +3,17 @@ from time import perf_counter
 from uuid import uuid4
 
 from llm_reliability_analytics.models.domain import TestCase, TestResult
-from llm_reliability_analytics.runner.llm_client import BaseLLMClient
+from llm_reliability_analytics.runner.llm_client import FATAL_PROVIDER_ERRORS, BaseLLMClient
 from llm_reliability_analytics.runner.mock_client import MockLLMClient
+
+
+class RunAborted(RuntimeError):
+    """A fatal provider error stopped the run; carries the attempts completed before it."""
+
+    def __init__(self, cause: Exception, partial_results: list[TestResult]) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+        self.partial_results = partial_results
 
 
 class TestRunner:
@@ -48,7 +57,9 @@ class TestRunner:
                         latency_source = "provider_reported"
                     else:
                         latency_ms = measured_latency_ms
-                except Exception as exc:  # noqa: BLE001 - demo runner should be fault tolerant
+                except FATAL_PROVIDER_ERRORS as exc:
+                    raise RunAborted(exc, results) from exc
+                except Exception as exc:  # noqa: BLE001 - per-attempt failures are evidence
                     error_type = type(exc).__name__
                     latency_ms = (perf_counter() - start) * 1000
 

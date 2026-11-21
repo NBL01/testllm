@@ -100,7 +100,10 @@ Unknown mock IDs and unsupported oracle profiles are rejected by job creation.
 
 For optional Ollama use, start the local service, install a model available to your
 machine, and verify it with `ollama list`. `GET /models` reports discovery status.
-There is no automatic switch to mock when a real provider fails.
+There is no automatic switch to mock when a real provider fails. A missing model, rejected
+credentials or an unreachable endpoint fail the job at once with the provider's
+message, keeping any attempts already scored; a timeout counts as a failed attempt,
+because slowness is evidence about the model.
 
 ## Comparison, Queue and CLI Operations
 

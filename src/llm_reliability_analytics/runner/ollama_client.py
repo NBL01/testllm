@@ -7,6 +7,7 @@ import httpx
 from llm_reliability_analytics.runner.llm_client import (
     BaseLLMClient,
     LLMGeneration,
+    LLMConnectionError,
     LLMModelNotFoundError,
     LLMRequestError,
     LLMServiceUnavailableError,
@@ -41,7 +42,7 @@ class OllamaLLMClient(BaseLLMClient):
             with httpx.Client(base_url=self.base_url, timeout=self.timeout_seconds) as client:
                 response = client.post("/api/generate", json=payload)
         except httpx.ConnectError as exc:
-            raise LLMServiceUnavailableError(
+            raise LLMConnectionError(
                 "Ollama is not reachable. Start Ollama and try again."
             ) from exc
         except httpx.TimeoutException as exc:

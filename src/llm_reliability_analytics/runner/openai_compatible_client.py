@@ -7,6 +7,8 @@ import httpx
 
 from llm_reliability_analytics.runner.llm_client import (
     BaseLLMClient,
+    LLMAuthenticationError,
+    LLMConnectionError,
     LLMGeneration,
     LLMModelNotFoundError,
     LLMRequestError,
@@ -62,7 +64,7 @@ class OpenAICompatibleClient(BaseLLMClient):
                     headers=headers,
                 )
         except httpx.ConnectError as exc:
-            raise LLMServiceUnavailableError(
+            raise LLMConnectionError(
                 f"OpenAI-compatible endpoint is not reachable at {self.base_url}."
             ) from exc
         except httpx.TimeoutException as exc:
@@ -73,7 +75,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             raise LLMRequestError(f"OpenAI-compatible request failed: {exc}") from exc
 
         if response.status_code in (401, 403):
-            raise LLMRequestError(
+            raise LLMAuthenticationError(
                 f"OpenAI-compatible endpoint rejected credentials (HTTP {response.status_code}); set {API_KEY_ENV}."
             )
         if response.status_code == 404:

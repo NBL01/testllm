@@ -775,3 +775,36 @@ def test_duplicate_with_another_model_keeps_snapshot_and_settings_comparable(mon
     internal = FastAPI(); internal.include_router(router)
     compared = TestClient(internal).post("/internal/metrics/compare", json={"run_ids": runs})
     assert compared.status_code == 200, compared.text
+
+
+def test_unusable_provider_fails_the_job_instead_of_scoring_every_attempt(monkeypatch, tmp_path) -> None:
+    from llm_reliability_analytics.runner.llm_client import LLMConnectionError, LLMGeneration, LLMModelNotFoundError
+    from llm_reliability_analytics.runner.openai_compatible_client import OpenAICompatibleClient
+
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "fatal_provider.duckdb"))
+    client = TestClient(app)
+    payload = {"provider": "openai_compatible", "input_path": "sample_test_cases.jsonl", "limit": 3, "repeat_count": 2}
+
+    def missing(self, prompt):
+        raise LLMModelNotFoundError(f"Model '{self.model_name}' was not found at {self.base_url}.")
+
+    monkeypatch.setattr(OpenAICompatibleClient, "generate_with_metadata", missing)
+    typo = client.post("/evaluation-jobs", json={**payload, "model_name": "qwen2.5:typo"}).json()["job_id"]
+    assert client.post(f"/evaluation-jobs/{typo}/run?wait=true").status_code == 404
+    failed = client.get(f"/evaluation-jobs/{typo}").json()
+    assert failed["status"] == "failed" and "qwen2.5:typo" in failed["failure_reason"] and failed["attempts"] is None
+
+    calls = []
+
+    def drops_after_two(self, prompt):
+        calls.append(prompt)
+        if len(calls) > 2:
+            raise LLMConnectionError("OpenAI-compatible endpoint is not reachable at http://127.0.0.1:9/v1.")
+        return LLMGeneration(text="4")
+
+    monkeypatch.setattr(OpenAICompatibleClient, "generate_with_metadata", drops_after_two)
+    outage = client.post("/evaluation-jobs", json={**payload, "model_name": "m"}).json()["job_id"]
+    assert client.post(f"/evaluation-jobs/{outage}/run?wait=true").status_code == 503
+    job = client.get(f"/evaluation-jobs/{outage}").json()
+    assert job["status"] == "failed" and "not reachable" in job["failure_reason"] and job["attempts"] == 2
+    assert client.get(f"/evaluation-jobs/{outage}/summary").json()["report"]["total_test_cases"] == 2
