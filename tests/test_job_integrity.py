@@ -73,22 +73,37 @@ def test_failed_execution_keeps_run_and_queue_continues(monkeypatch):
     conn = get_connection()
     row = conn.execute("SELECT status, finished_at FROM test_runs WHERE id=?", [failed.linked_run_id]).fetchone()
     conn.close()
+    assert row[0] == "failed" and row[1] is not None
+    assert jobs.get_job(first.job_id).status == "completed"
+    with pytest.raises(ValueError):
+        jobs.run_job(second.job_id)
 
 
-# NOTE: unfinished. `api_database_owner` is not implemented in main.py yet, and the
-# trailing assertions below (row/first/second) are stale fragments from another test
-# that need to be removed once the single-owner guard lands. Tracked for repair.
-@pytest.mark.xfail(reason="api_database_owner guard not implemented; test body needs repair", strict=False)
 def test_only_one_api_owner_is_allowed(tmp_path):
     from llm_reliability_analytics.main import api_database_owner
     with api_database_owner():
         with pytest.raises(RuntimeError, match="one FastAPI"):
             with api_database_owner():
                 pass
-    assert row[0] == "failed" and row[1] is not None
-    assert jobs.get_job(first.job_id).status == "completed"
-    with pytest.raises(ValueError):
-        jobs.run_job(second.job_id)
+
+
+def test_queue_contention_is_not_counted_as_failed_execution(monkeypatch):
+    first = jobs.create_job(EvaluationJobCreate(limit=1))
+    second = jobs.create_job(EvaluationJobCreate(limit=1))
+    jobs.queue_job(first.job_id)
+    jobs.queue_job(second.job_id)
+    original = jobs.run_job
+
+    def competing_request(job_id):
+        if job_id == first.job_id:
+            jobs.cancel_job(job_id)
+        return original(job_id)
+
+    monkeypatch.setattr(jobs, "run_job", competing_request)
+    outcome = jobs.process_queued_jobs(2)
+    assert outcome.failures == []
+    assert outcome.processed_count == 1
+    assert outcome.results[0].job.job_id == second.job_id
 
 
 def test_case_replacement_rolls_back_on_duplicate_input():

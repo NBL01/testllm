@@ -65,6 +65,9 @@ class OllamaLLMClient(BaseLLMClient):
         except ValueError as exc:
             raise LLMRequestError("Ollama response was not valid JSON.") from exc
 
+        if not isinstance(payload_json, dict):
+            raise LLMRequestError("Ollama response must be a JSON object.")
+
         error_message = str(payload_json.get("error", "")).strip()
         if error_message:
             if "not found" in error_message.lower():
@@ -73,7 +76,10 @@ class OllamaLLMClient(BaseLLMClient):
                 )
             raise LLMRequestError(f"Ollama error: {error_message}")
 
-        generated_text = str(payload_json.get("response", "")).strip()
+        generated_text = payload_json.get("response", "")
+        if not isinstance(generated_text, str):
+            raise LLMRequestError("Ollama response text must be a string.")
+        generated_text = generated_text.strip()
         if not generated_text:
             raise LLMRequestError("Ollama returned an empty response.")
 
@@ -110,14 +116,15 @@ class OllamaLLMClient(BaseLLMClient):
         except ValueError as exc:
             raise LLMRequestError("Ollama /api/tags response was not valid JSON.") from exc
 
-        models = payload.get("models", [])
+        if not isinstance(payload, dict):
+            raise LLMRequestError("Ollama /api/tags must return a JSON object.")
+        models = payload.get("models")
         if not isinstance(models, list):
-            return []
+            raise LLMRequestError("Ollama /api/tags must contain a models array.")
 
         names: list[str] = []
         for model in models:
-            if isinstance(model, dict):
-                name = model.get("name")
-                if isinstance(name, str) and name.strip():
-                    names.append(name.strip())
+            if not isinstance(model, dict) or not isinstance(model.get("name"), str) or not model["name"].strip():
+                raise LLMRequestError("Ollama models must include nonempty model names.")
+            names.append(model["name"].strip())
         return sorted(set(names))

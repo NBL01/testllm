@@ -9,13 +9,15 @@ import re
 from uuid import uuid4
 from typing import Any, Literal, cast
 
+import duckdb
 from pydantic import BaseModel
 
 from llm_reliability_analytics.analytics.reliability import ReliabilityReport
 from llm_reliability_analytics.ingestion.loader import resolve_input_path, load_test_cases
 from llm_reliability_analytics.models.domain import TestCase
 from llm_reliability_analytics.storage.db import get_connection
-from llm_reliability_analytics.reporting.markdown import generate_run_markdown_report
+from llm_reliability_analytics.reporting.markdown import append_job_context, render_markdown_report
+from llm_reliability_analytics.reporting.csv_export import export_failed_cases_csv
 from llm_reliability_analytics.storage.duckdb_store import RunAggregatedSummary, fetch_results_for_run, create_test_run
 from llm_reliability_analytics.storage.evaluation_job_repository import (
     EvaluationJob,
@@ -127,6 +129,10 @@ class EvaluationJobNotFoundError(ValueError):
     """Raised when a requested job does not exist."""
 
 
+class EvaluationJobConflictError(ValueError):
+    """Raised when the job's current state rejects a lifecycle action."""
+
+
 def create_job(payload: EvaluationJobCreate) -> EvaluationJob:
     _validate_job_create_payload(payload)
     cases, summary = load_test_cases(payload.input_path)
@@ -236,10 +242,11 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
         raise EvaluationJobNotFoundError(f"Evaluation job not found: {job_id}")
 
     if job.status not in {"draft", "queued"} or job.linked_run_id:
-        raise ValueError(f"Evaluation job cannot run from status={job.status}: {job_id}")
+        raise EvaluationJobConflictError(f"Evaluation job cannot run from status={job.status}: {job_id}")
     if not job.dataset_snapshot:
         raise ValueError("Legacy job has no dataset snapshot. Duplicate it to validate current inputs.")
     run_id = str(uuid4())
+    seed = 42
     started_at = datetime.now(timezone.utc)
     conn = get_connection()
     try:
@@ -250,7 +257,7 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
             "WHERE job_id=? AND status IN ('draft','queued') AND linked_run_id IS NULL RETURNING job_id",
             [run_id, started_at, started_at, job_id]).fetchone()
         if not claimed:
-            raise ValueError("Job was already claimed or canceled. Reload its status.")
+            raise EvaluationJobConflictError("Job was already claimed or canceled. Reload its status.")
         execution_run = create_test_run(
             name=job.project_name.strip() or f"evaluation-job-{job_id[:8]}", model_name=job.model_name,
             provider="ollama" if job.provider in {"ollama", "local"} else "mock",
@@ -259,10 +266,15 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
             repeat_count=job.repeat_count, mode="real_local" if job.provider in {"ollama", "local"} else "mock",
             notes=job.notes, run_group_id=f"evaluation-job:{job_id}", repetition_index=1,
             metadata={"job_id": job_id, "dataset_sha256": job.dataset_sha256,
-                      "configuration": job.model_dump(mode="json", exclude={"dataset_snapshot"}),
+                      "configuration": {**job.model_dump(mode="json", exclude={"dataset_snapshot"}), "seed": seed},
                       "dataset_snapshot": job.dataset_snapshot},
             run_id=run_id, connection=conn)
         conn.execute("COMMIT")
+    except duckdb.TransactionException as exc:
+        conn.execute("ROLLBACK")
+        if "conflict" in str(exc).lower():
+            raise EvaluationJobConflictError("Job state changed; reload before retrying this action.") from exc
+        raise
     except Exception:
         conn.execute("ROLLBACK")
         raise
@@ -294,6 +306,7 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
             run_group_id=run_group_id,
             limit=refreshed.limit,
             repeats_per_case=refreshed.repeat_count,
+            seed=seed,
         )
     except Exception as exc:  # noqa: BLE001 - persist failure before bubbling error
         _finish_run(run_id, "failed")
@@ -324,12 +337,12 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
 def queue_job(job_id: str) -> EvaluationJob:
     job = get_job(job_id)
     if job.linked_run_id:
-        raise ValueError(f"Evaluation job cannot be queued after execution: {job_id}")
+        raise EvaluationJobConflictError(f"Evaluation job cannot be queued after execution: {job_id}")
     if job.status in {"running", "completed", "failed", "canceled"}:
-        raise ValueError(f"Evaluation job cannot be queued from status={job.status}: {job_id}")
+        raise EvaluationJobConflictError(f"Evaluation job cannot be queued from status={job.status}: {job_id}")
     if job.status == "queued":
         return job
-    queued = update_evaluation_job(job_id, status="queued", queued_at=datetime.now(timezone.utc), expected_statuses=("draft",))
+    queued = _update_job_transition(job_id, status="queued", queued_at=datetime.now(timezone.utc), expected_statuses=("draft",))
     if queued is None:
         raise EvaluationJobNotFoundError(f"Evaluation job not found after queue update: {job_id}")
     return queued
@@ -348,6 +361,8 @@ def process_queued_jobs(max_jobs: int = 10) -> EvaluationJobQueueProcessResult:
     for job in queued_jobs:
         try:
             results.append(run_job(job.job_id))
+        except EvaluationJobConflictError:
+            continue  # Another request claimed or canceled this queued job.
         except Exception as exc:
             failures.append({"job_id": job.job_id, "error": str(exc)[:1000]})
     return EvaluationJobQueueProcessResult(
@@ -367,14 +382,14 @@ def queue_stats() -> EvaluationJobQueueStatsResult:
 def cancel_job(job_id: str, reason: str = "") -> EvaluationJob:
     job = get_job(job_id)
     if job.status in {"completed", "failed"} or job.linked_run_id:
-        raise ValueError(f"Evaluation job cannot be canceled from status={job.status}: {job_id}")
+        raise EvaluationJobConflictError(f"Evaluation job cannot be canceled from status={job.status}: {job_id}")
     if job.status == "running":
-        raise ValueError(f"Evaluation job running; stop worker first: {job_id}")
+        raise EvaluationJobConflictError(f"Evaluation job running; stop worker first: {job_id}")
     if job.status == "canceled":
         return job
 
     cancel_reason = reason.strip() or "Canceled by user."
-    canceled = update_evaluation_job(
+    canceled = _update_job_transition(
         job_id,
         status="canceled",
         failure_reason=cancel_reason[:1000],
@@ -384,6 +399,18 @@ def cancel_job(job_id: str, reason: str = "") -> EvaluationJob:
     if canceled is None:
         raise EvaluationJobNotFoundError(f"Evaluation job not found after cancel update: {job_id}")
     return canceled
+
+
+def _update_job_transition(job_id: str, **updates: Any) -> EvaluationJob | None:
+    """Translate conditional-update rejection and competing writes consistently."""
+    try:
+        return update_evaluation_job(job_id, **updates)
+    except duckdb.TransactionException as exc:
+        if "conflict" in str(exc).lower():
+            raise EvaluationJobConflictError("Job state changed; reload before retrying this action.") from exc
+        raise
+    except ValueError as exc:
+        raise EvaluationJobConflictError(str(exc)) from exc
 
 
 def get_job_summary(job_id: str) -> EvaluationJobSummaryResult:
@@ -463,7 +490,7 @@ def get_job_report_payload(job_id: str) -> EvaluationJobReportPayload:
     job = get_job(job_id)
     run_id = _require_run_id(job)
     run_report: RunReportResult = run_report_workflow(run_id)
-    markdown_report = generate_run_markdown_report(run_id)
+    markdown_report = append_job_context(render_markdown_report(run_report), job)
     return EvaluationJobReportPayload(
         job=job,
         run_id=run_id,
@@ -477,7 +504,7 @@ def get_job_client_report_payload(job_id: str, failed_case_limit: int = 20) -> E
     job = get_job(job_id)
     run_id = _require_run_id(job)
     run_report: RunReportResult = run_report_workflow(run_id)
-    markdown_report = generate_run_markdown_report(run_id)
+    markdown_report = append_job_context(render_markdown_report(run_report), job)
     failed_cases = get_job_failed_cases(job_id, limit=failed_case_limit, offset=0)
     return EvaluationJobClientReportPayload(
         job=job,
@@ -489,6 +516,10 @@ def get_job_client_report_payload(job_id: str, failed_case_limit: int = 20) -> E
         failed_cases_sample=failed_cases.items,
         markdown_report=markdown_report,
     )
+
+
+def get_job_failed_cases_csv(job_id: str) -> str:
+    return export_failed_cases_csv(_require_run_id(get_job(job_id)))
 
 
 def _require_run_id(job: EvaluationJob) -> str:

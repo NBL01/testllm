@@ -374,6 +374,17 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
             ErrorTaxonomy.UNKNOWN,
         }
 
+        # Resolve the same oracle configuration even when generation fails.
+        oracle_type = oracle_mapping.get(test_case.oracle_type.value, test_case.oracle_type.value)
+        metadata = dict(test_case.metadata)
+        if oracle_type == "semantic_similarity":
+            metadata.setdefault("similarity_threshold", 0.6)
+            metadata.setdefault("valid_answers", [test_case.expected_answer])
+        if oracle_type == "composite_rule":
+            metadata.setdefault("must_contain", [test_case.expected_answer])
+            metadata.setdefault("forbidden_keywords", [])
+            metadata.setdefault("regex_constraints", [])
+
         # If generation failed, keep that failure trace and skip oracle execution.
         if result.error_type is not None and not (result.actual_answer or "").strip():
             result.is_correct = False
@@ -384,7 +395,7 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
                     "evaluation_skipped": True,
                     "reason": "model_generation_error",
                     "error_type": result.error_type,
-                    "input_config": dict(test_case.metadata),
+                    "input_config": metadata,
                 }
             )
             result.error_taxonomy = _taxonomy_from_error_type(result.error_type)
@@ -395,20 +406,6 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
                 ErrorTaxonomy.UNKNOWN,
             }
             continue
-
-        # Keep legacy aliases, but preserve direct oracle types (regex_match, json_schema, etc.).
-        oracle_type = oracle_mapping.get(test_case.oracle_type.value, test_case.oracle_type.value)
-        metadata = dict(test_case.metadata)
-
-        if oracle_type == "semantic_similarity":
-            metadata.setdefault("similarity_threshold", 0.6)
-            metadata.setdefault("valid_answers", [test_case.expected_answer])
-
-        # For demo datasets, custom cases default to simple "must contain expected answer" rule.
-        if oracle_type == "composite_rule":
-            metadata.setdefault("must_contain", [test_case.expected_answer])
-            metadata.setdefault("forbidden_keywords", [])
-            metadata.setdefault("regex_constraints", [])
 
         try:
             evaluation = evaluate_with_oracle(

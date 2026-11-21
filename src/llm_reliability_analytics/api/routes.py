@@ -3,6 +3,7 @@
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from llm_reliability_analytics.analytics.reliability import ReliabilityReport
@@ -33,6 +34,7 @@ from llm_reliability_analytics.test_authoring.service import CandidateAuthoringS
 from llm_reliability_analytics.workflow.evaluation_jobs import (
     EvaluationJobCancelRequest,
     EvaluationJobClientReportPayload,
+    EvaluationJobConflictError,
     EvaluationJobFailedCase,
     EvaluationJobFailedCasesResult,
     EvaluationJobListResult,
@@ -47,6 +49,7 @@ from llm_reliability_analytics.workflow.evaluation_jobs import (
     create_job,
     duplicate_job,
     get_job_failed_cases,
+    get_job_failed_cases_csv,
     get_job_report_payload,
     get_job_client_report_payload,
     get_job,
@@ -363,6 +366,8 @@ def retry_evaluation_job_endpoint(job_id: str, request: EvaluationJobRetryReques
         return retry_job(job_id=job_id, queue=request.queue)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EvaluationJobConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/evaluation-jobs", response_model=EvaluationJobListResponse)
@@ -409,6 +414,8 @@ def run_evaluation_job_endpoint(job_id: str) -> EvaluationJobRunResult:
         return run_job(job_id)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EvaluationJobConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except LLMServiceUnavailableError as exc:
@@ -427,6 +434,8 @@ def queue_evaluation_job_endpoint(job_id: str) -> EvaluationJob:
         return queue_job(job_id)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EvaluationJobConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -460,6 +469,8 @@ def cancel_evaluation_job_endpoint(
         return cancel_job(job_id=job_id, reason=request.reason)
     except EvaluationJobNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except EvaluationJobConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -499,6 +510,18 @@ def evaluation_job_failed_cases_endpoint(
         offset=result.offset,
         items=result.items,
     )
+
+
+@router.get("/evaluation-jobs/{job_id}/failed-cases.csv", response_class=Response)
+def evaluation_job_failed_cases_csv_endpoint(job_id: str) -> Response:
+    try:
+        content = get_job_failed_cases_csv(job_id)
+    except EvaluationJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=content, media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="failed-attempts.csv"'})
 
 
 @router.get("/evaluation-jobs/{job_id}/traces", response_model=EvaluationJobTracesResponse)

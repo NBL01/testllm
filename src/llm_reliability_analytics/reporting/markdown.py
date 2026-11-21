@@ -90,6 +90,7 @@ def append_job_context(markdown: str, job: BaseModel | Mapping[str, Any]) -> str
         ("job_id", "Job ID"), ("status", "Status"), ("linked_run_id", "Linked Run ID"),
         ("provider", "Provider"), ("model_name", "Model"), ("input_path", "Dataset Path"),
         ("dataset_version", "Dataset Version"), ("evaluation_mode", "Evaluation Mode"),
+        ("dataset_sha256", "Frozen Dataset SHA-256"), ("source_job_id", "Source Job ID"),
         ("oracle_profile", "Oracle Profile"), ("temperature", "Temperature"),
         ("max_output_tokens", "Max Output Tokens"), ("repeat_count", "Configured Repeat Count"),
         ("timeout_seconds", "Timeout Seconds"), ("limit", "Case Limit"),

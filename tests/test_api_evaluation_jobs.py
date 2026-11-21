@@ -89,7 +89,7 @@ def test_evaluation_job_run_links_test_run(monkeypatch, tmp_path) -> None:
     assert get_payload["completed_at"] is not None
 
     rerun_response = client.post(f"/evaluation-jobs/{job_id}/run")
-    assert rerun_response.status_code == 400
+    assert rerun_response.status_code == 409
     assert "cannot run from status=completed" in rerun_response.json()["detail"]
 
     summary_response = client.get(f"/evaluation-jobs/{job_id}/summary")
@@ -172,7 +172,7 @@ def test_evaluation_job_queue_and_process(monkeypatch, tmp_path) -> None:
     assert get_payload["status"] == "completed"
 
     requeue_response = client.post(f"/evaluation-jobs/{job_id}/queue")
-    assert requeue_response.status_code == 400
+    assert requeue_response.status_code == 409
     assert "cannot be queued" in requeue_response.json()["detail"]
 
 
@@ -305,7 +305,7 @@ def test_evaluation_job_cancel_from_draft_and_queue_blocked(monkeypatch, tmp_pat
     assert cancel_payload["completed_at"] is not None
 
     queue_response = client.post(f"/evaluation-jobs/{job_id}/queue")
-    assert queue_response.status_code == 400
+    assert queue_response.status_code == 409
     assert "cannot be queued" in queue_response.json()["detail"]
 
     process_response = client.post("/evaluation-jobs/process-queue?max_jobs=5")

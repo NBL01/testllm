@@ -1,9 +1,11 @@
 import httpx
+import json as jsonlib
 import pytest
 
 from llm_reliability_analytics.runner.client_factory import build_llm_client
 from llm_reliability_analytics.runner.llm_client import (
     LLMModelNotFoundError,
+    LLMRequestError,
     LLMServiceUnavailableError,
     resolve_execution_mode,
 )
@@ -66,3 +68,35 @@ def test_ollama_client_raises_model_not_found_for_missing_model(monkeypatch: pyt
     client = OllamaLLMClient(model_name="missing-model")
     with pytest.raises(LLMModelNotFoundError):
         client.generate("Hello")
+
+
+@pytest.mark.parametrize("payload", [[], None, "bad", {"models": "bad"}, {"models": ["bad"]}])
+def test_malformed_ollama_discovery_is_a_typed_error(monkeypatch, payload):
+    class StubClient:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def get(self, path):
+            return httpx.Response(200, content=jsonlib.dumps(payload))
+    monkeypatch.setattr("llm_reliability_analytics.runner.ollama_client.httpx.Client", StubClient)
+    with pytest.raises(LLMRequestError, match="models|object"):
+        OllamaLLMClient(model_name="demo").list_installed_models()
+
+
+@pytest.mark.parametrize("payload", [[], None, {"response": {"not": "text"}}])
+def test_malformed_ollama_generation_is_a_typed_error(monkeypatch, payload):
+    class StubClient:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def post(self, path, json):
+            return httpx.Response(200, content=jsonlib.dumps(payload))
+    monkeypatch.setattr("llm_reliability_analytics.runner.ollama_client.httpx.Client", StubClient)
+    with pytest.raises(LLMRequestError):
+        OllamaLLMClient(model_name="demo").generate("Hello")
