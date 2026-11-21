@@ -98,16 +98,15 @@ class OpenAICompatibleClient(BaseLLMClient):
             or not payload["choices"]
             or not isinstance(payload["choices"][0], dict)
             or not isinstance(payload["choices"][0].get("message"), dict)
-            or not isinstance(payload["choices"][0]["message"].get("content"), str)
+            or not isinstance(payload["choices"][0]["message"].get("content") or "", str)
         ):
             raise LLMRequestError(
                 "OpenAI-compatible response must contain choices[0].message.content text."
             )
 
         first_choice = payload["choices"][0]
-        text = first_choice["message"]["content"].strip()
-        if not text:
-            raise LLMRequestError("OpenAI-compatible endpoint returned an empty response.")
+        # null/empty content (e.g. finish_reason "length") is an empty answer for the oracles to score.
+        text = (first_choice["message"].get("content") or "").strip()
 
         # Ponytail: latency_ms is left None because the runner measures wall-clock latency itself; upgrade path is extracting server timing headers if provided.
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else None

@@ -686,3 +686,80 @@ def test_job_options_includes_openai_compatible_and_base_url(monkeypatch, tmp_pa
     assert isinstance(payload["openai_compatible_base_url"], str)
     assert len(payload["openai_compatible_base_url"]) > 0
     assert payload["openai_compatible_base_url"].startswith("http")
+
+
+# ---------------------------------------------------------------------------
+# Findings from the agy adversarial review (2026-11-21), fixed and pinned here.
+# ---------------------------------------------------------------------------
+
+def test_exact_match_strict_output_rejects_number_inside_text_even_without_substring_matching() -> None:
+    oracle = ExactMatchOracle()
+    for metadata in ({"strict_output": True, "strict_exact": True}, {"strict_output": True}):
+        result = oracle.evaluate(expected_answer="10", actual_answer="The total answer is 10 items.", metadata=metadata)
+        assert (result.is_correct, result.error_type) == (False, "format_violation"), metadata
+    # Without strict_output the legacy numeric extraction still passes.
+    assert oracle.evaluate(expected_answer="10", actual_answer="The total answer is 10 items.",
+                           metadata={"strict_exact": True}).is_correct is True
+
+
+def test_real_provider_wall_clock_latency_is_labelled_observed(monkeypatch, tmp_path) -> None:
+    from llm_reliability_analytics.runner.llm_client import LLMGeneration
+    from llm_reliability_analytics.runner.openai_compatible_client import OpenAICompatibleClient
+
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "observed.duckdb"))
+    monkeypatch.setattr(OpenAICompatibleClient, "generate_with_metadata", lambda self, prompt: LLMGeneration(text="4"))
+    client = TestClient(app)
+    job = client.post("/evaluation-jobs", json={"provider": "openai_compatible", "model_name": "m",
+                                                "input_path": "sample_test_cases.jsonl", "limit": 2}).json()
+    assert client.post(f"/evaluation-jobs/{job['job_id']}/run?wait=true").status_code == 200
+    assert client.get(f"/evaluation-jobs/{job['job_id']}/summary").json()["report"]["latency_sources"] == {"observed": 2}
+
+
+def test_empty_model_output_is_scored_as_an_answer_not_a_runtime_error(monkeypatch) -> None:
+    import httpx
+    from llm_reliability_analytics.runner.openai_compatible_client import OpenAICompatibleClient
+
+    class Stub:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def post(self, *args, **kwargs):
+            return httpx.Response(200, json={"choices": [{"message": {"content": None}, "finish_reason": "length"}]})
+
+    monkeypatch.setattr("llm_reliability_analytics.runner.openai_compatible_client.httpx.Client", Stub)
+    generation = OpenAICompatibleClient(model_name="m", base_url="http://x/v1").generate_with_metadata("q")
+    assert generation.text == "" and generation.metadata["finish_reason"] == "length"
+
+
+def test_unknown_category_filter_matches_results_without_a_category(monkeypatch, tmp_path) -> None:
+    from llm_reliability_analytics.workflow import evaluation_jobs as workflow
+
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "unknown_category.duckdb"))
+    client = TestClient(app)
+    job_id = client.post("/evaluation-jobs", json={"input_path": "sample_test_cases.jsonl", "model_name": "mock-failing",
+                                                   "limit": 3}).json()["job_id"]
+    client.post(f"/evaluation-jobs/{job_id}/run?wait=true")
+    original = workflow.fetch_results_for_run
+    monkeypatch.setattr(workflow, "fetch_results_for_run",
+                        lambda run_id: [row.model_copy(update={"category": None}) for row in original(run_id)])
+    page = client.get(f"/evaluation-jobs/{job_id}/failed-cases", params={"category": "unknown"}).json()
+    assert page["total"] == 3
+
+
+def test_stop_request_just_after_claim_waits_for_registration(monkeypatch, tmp_path) -> None:
+    import threading
+    from llm_reliability_analytics.storage.evaluation_job_repository import update_evaluation_job
+    from llm_reliability_analytics.workflow import evaluation_jobs as workflow
+
+    monkeypatch.setenv("LLM_RELIABILITY_DB_PATH", str(tmp_path / "claim_window.duckdb"))
+    client = TestClient(app)
+    job_id = client.post("/evaluation-jobs", json={"input_path": "sample_test_cases.jsonl", "limit": 1}).json()["job_id"]
+    update_evaluation_job(job_id, status="running", linked_run_id="r")  # claimed; progress not registered yet
+    registrar = threading.Timer(0.2, lambda: workflow._progress.__setitem__(job_id, (0, 1)))
+    registrar.start()
+    try:
+        assert workflow.cancel_job(job_id, reason="Too slow.").status == "running"
+        assert workflow.job_progress(job_id)[2] is True
+    finally:
+        registrar.join()
+        workflow._release_progress(job_id)

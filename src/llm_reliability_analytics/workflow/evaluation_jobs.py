@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import threading
+import time
 from collections.abc import Callable
 from uuid import uuid4
 from typing import Any, Literal, cast
@@ -346,12 +347,12 @@ def run_job(job_id: str) -> EvaluationJobRunResult:
             run_id=run_id, connection=conn)
         conn.execute("COMMIT")
     except duckdb.TransactionException as exc:
-        conn.execute("ROLLBACK")
+        _rollback_quietly(conn)
         if "conflict" in str(exc).lower():
             raise EvaluationJobConflictError("Job state changed; reload before retrying this action.") from exc
         raise
     except Exception:
-        conn.execute("ROLLBACK")
+        _rollback_quietly(conn)
         raise
     finally:
         conn.close()
@@ -512,10 +513,15 @@ def cancel_job(job_id: str, reason: str = "") -> EvaluationJob:
     """Cancel a draft/queued job, or ask a run executing in this process to stop after its current attempt."""
     job = get_job(job_id)
     if job.status == "running":
-        with _progress_lock:
-            active = job_id in _progress
-            if active:
-                _stop_requests.setdefault(job_id, reason.strip() or "Stopped by user.")
+        deadline = time.monotonic() + 1.0  # claim commits just before progress is registered
+        while True:
+            with _progress_lock:
+                active = job_id in _progress
+                if active:
+                    _stop_requests.setdefault(job_id, reason.strip() or "Stopped by user.")
+            if active or time.monotonic() >= deadline:
+                break
+            time.sleep(0.02)
         if not active:
             raise EvaluationJobConflictError(f"Evaluation job is not executing in this API process; it cannot be stopped here: {job_id}")
         return job
@@ -568,7 +574,7 @@ def get_job_failed_cases(job_id: str, limit: int = 200, offset: int = 0, error_t
     results = fetch_results_for_run(run_id)
     failed = [result for result in results if not result.is_correct
               and (error_type is None or result.error_type == error_type)
-              and (category is None or result.category == category)]
+              and (category is None or (result.category or "unknown") == category)]
     failed_sorted = sorted(
         failed,
         key=lambda result: (result.score, result.latency_ms, result.test_case_id, result.attempt_index),
@@ -689,6 +695,14 @@ def _validate_model_choice(provider: str, model_name: str) -> None:
         raise ValueError("Invalid model identifier; use a model tag such as llama3.2:1b.")
 
 
+def _rollback_quietly(conn: duckdb.DuckDBPyConnection) -> None:
+    """Roll back if a transaction is open; never replace the error being handled."""
+    try:
+        conn.execute("ROLLBACK")
+    except duckdb.Error:
+        pass
+
+
 def _finish_run(run_id: str, status: str) -> None:
     conn = get_connection()
     try:
@@ -712,7 +726,7 @@ def recover_interrupted_jobs() -> int:
         conn.execute("COMMIT")
         return len(rows)
     except Exception:
-        conn.execute("ROLLBACK")
+        _rollback_quietly(conn)
         raise
     finally:
         conn.close()

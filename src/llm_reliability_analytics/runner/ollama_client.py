@@ -80,9 +80,7 @@ class OllamaLLMClient(BaseLLMClient):
         generated_text = payload_json.get("response", "")
         if not isinstance(generated_text, str):
             raise LLMRequestError("Ollama response text must be a string.")
-        generated_text = generated_text.strip()
-        if not generated_text:
-            raise LLMRequestError("Ollama returned an empty response.")
+        generated_text = generated_text.strip()  # an empty answer is scored by the oracles, not an error
 
         total_duration_ns = payload_json.get("total_duration")
         latency_ms = None

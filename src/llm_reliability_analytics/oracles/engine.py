@@ -144,6 +144,22 @@ class ExactMatchOracle(BaseOracle):
         if actual_value is not None and numeric_candidates:
             closest_expected = min(numeric_candidates, key=lambda value: abs(value - actual_value))
             difference = abs(closest_expected - actual_value)
+            if difference <= number_tolerance and metadata.get("strict_output"):
+                # Plain numbers were decided above; this number was pulled out of surrounding text.
+                return OracleEvaluation(
+                    is_correct=False,
+                    score=0.0,
+                    error_type="format_violation",
+                    explanation="strict_output requires only the answer; the expected number appears inside other text.",
+                    details={
+                        "expected_normalized": normalized_candidates,
+                        "actual_normalized": actual_normalized,
+                        "comparison_result": "numeric_in_text_rejected_by_strict_output",
+                        "actual_value": actual_value,
+                        "strict_exact": strict_exact,
+                        "strict_output": True,
+                    },
+                )
             if difference <= number_tolerance:
                 return OracleEvaluation(
                     is_correct=True,

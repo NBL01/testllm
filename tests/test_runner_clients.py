@@ -215,7 +215,6 @@ def test_openai_compatible_client_omits_auth_without_key(
         {"choices": []},
         {"choices": [{"message": {"content": 5}}]},
         [1],
-        {"choices": [{"message": {"content": "   "}}]},
     ],
 )
 def test_openai_compatible_client_malformed_payloads_raise_request_error(
@@ -311,3 +310,18 @@ def test_resolve_execution_mode_and_client_factory_for_openai_compatible() -> No
     with pytest.raises(ValueError, match="An OpenAI-compatible model name is required."):
         build_llm_client(provider="openai_compatible", run_mode="real_api", model_name="  ")
 
+
+
+def test_blank_model_output_is_an_empty_answer_not_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+    from llm_reliability_analytics.runner.openai_compatible_client import OpenAICompatibleClient
+
+    class Stub:
+        def __init__(self, *args: object, **kwargs: object) -> None: ...
+        def __enter__(self) -> "Stub": return self
+        def __exit__(self, *args: object) -> None: ...
+        def post(self, *args: object, **kwargs: object) -> httpx.Response:
+            return httpx.Response(200, json={"choices": [{"message": {"content": "   "}, "finish_reason": "stop"}]})
+
+    monkeypatch.setattr("llm_reliability_analytics.runner.openai_compatible_client.httpx.Client", Stub)
+    assert OpenAICompatibleClient(model_name="m", base_url="http://x/v1").generate("q") == ""

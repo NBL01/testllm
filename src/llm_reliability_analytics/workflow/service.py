@@ -290,8 +290,8 @@ def _run_prepared_test_cases(
         for result in results:
             if normalized_run_mode == "mock":
                 result.latency_source = latency_source
-            elif result.latency_source in {"", None}:
-                result.latency_source = latency_source
+            elif result.latency_source in {"", None, "measured"}:
+                result.latency_source = latency_source  # runner wall-clock timing of a real provider call
 
         score_results_with_oracles(test_cases=test_cases, results=results)
         insert_batch_results(results, finalize=False)
