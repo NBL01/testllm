@@ -17,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      LLM_RELIABILITY_DB_PATH: ${{ runner.temp }}/python-tests/reliability.duckdb
       MPLBACKEND: Agg
     steps:
       - uses: actions/checkout@v4
@@ -29,6 +28,9 @@ jobs:
       - run: python -m venv .venv
       - run: .venv/bin/python -m pip install -r requirements.lock
       - run: .venv/bin/python -m pytest -q --junitxml=test-results/python.xml
+        env:
+          # The runner context exists only at step level, not in job-level env.
+          LLM_RELIABILITY_DB_PATH: ${{ runner.temp }}/python-tests/reliability.duckdb
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -41,7 +43,6 @@ jobs:
     timeout-minutes: 20
     env:
       NEXT_TELEMETRY_DISABLED: '1'
-      LLM_RELIABILITY_DB_PATH: ${{ runner.temp }}/client-fallback/reliability.duckdb
     defaults:
       run:
         working-directory: client-app
@@ -64,9 +65,13 @@ jobs:
       - run: npm ci
       - run: npm audit --audit-level=moderate
       - run: npm test
+        env:
+          LLM_RELIABILITY_DB_PATH: ${{ runner.temp }}/client-fallback/reliability.duckdb
       - run: npx playwright install --with-deps chromium
       # Playwright builds a clean production snapshot, then starts Next + isolated FastAPI.
       - run: npm run test:e2e
+        env:
+          LLM_RELIABILITY_DB_PATH: ${{ runner.temp }}/client-fallback/reliability.duckdb
       - uses: actions/upload-artifact@v4
         if: always()
         with:
