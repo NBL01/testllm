@@ -83,6 +83,22 @@ class ExactMatchOracle(BaseOracle):
                 ),
                 None,
             )
+            if contained_candidate is not None and metadata.get("strict_output") and "allow_substring_match" not in metadata:
+                # The case demands only the answer; finding it inside a sentence is a format failure.
+                return OracleEvaluation(
+                    is_correct=False,
+                    score=0.0,
+                    error_type="format_violation",
+                    explanation="strict_output requires only the answer; the expected answer appears inside other text.",
+                    details={
+                        "expected_normalized": normalized_candidates,
+                        "actual_normalized": actual_normalized,
+                        "comparison_result": "contains_match_rejected_by_strict_output",
+                        "matched_candidate": contained_candidate,
+                        "strict_exact": strict_exact,
+                        "strict_output": True,
+                    },
+                )
             if contained_candidate is not None:
                 return OracleEvaluation(
                     is_correct=True,

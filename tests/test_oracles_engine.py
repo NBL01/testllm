@@ -248,3 +248,16 @@ def test_strict_numeric_scoring_records_enforcement_in_effective_config() -> Non
     assert result.error_type == "format_violation" and result.error_taxonomy.value == "parsing"
     assert json.loads(result.oracle_details_json)["input_config"]["strict_output_enforced"] is True
     assert "strict_output_enforced" not in case.metadata  # the frozen case itself is untouched
+
+
+def test_exact_match_strict_output_rejects_answers_embedded_in_sentences() -> None:
+    oracle = ExactMatchOracle()
+    strict = {"strict_output": True}
+    sentence = oracle.evaluate(expected_answer="Lisbon", actual_answer="Portugal's capital is Lisbon.", metadata=strict)
+    assert (sentence.is_correct, sentence.error_type) == (False, "format_violation")
+    assert sentence.details["comparison_result"] == "contains_match_rejected_by_strict_output"
+    assert oracle.evaluate(expected_answer="Lisbon", actual_answer=" lisbon. ", metadata=strict).is_correct is True
+    # Legacy lenient default and an explicit opt-in to substring matching are unchanged.
+    assert oracle.evaluate(expected_answer="Lisbon", actual_answer="Portugal's capital is Lisbon.").is_correct is True
+    assert oracle.evaluate(expected_answer="Lisbon", actual_answer="Portugal's capital is Lisbon.",
+                           metadata={**strict, "allow_substring_match": True}).is_correct is True

@@ -389,7 +389,7 @@ def score_results_with_oracles(test_cases: list[TestCase], results: list[TestRes
             metadata.setdefault("must_contain", [test_case.expected_answer])
             metadata.setdefault("forbidden_keywords", [])
             metadata.setdefault("regex_constraints", [])
-        if oracle_type == "numeric_tolerance" and metadata.get("strict_output"):
+        if oracle_type in {"numeric_tolerance", "exact_match"} and metadata.get("strict_output"):
             # Provenance: earlier runs ignored strict_output, so their evidence must not compare as equal.
             metadata["strict_output_enforced"] = True
 
